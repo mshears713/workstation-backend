@@ -1,0 +1,28 @@
+# Core LangChain / LangGraph stack (1.0 LTS)
+langchain>=1.0,<2.0
+langchain-core>=1.0,<2.0
+langgraph>=1.0,<2.0
+langsmith>=0.3.0
+
+# Model provider — OpenRouter is OpenAI-API compatible
+langchain-openai>=1.0,<2.0
+
+# OpenAI audio transcription (voice-note pipeline; separate from the
+# OpenRouter chat model above, used only by app/voice/transcription.py)
+openai>=1.50
+
+# LangGraph Studio local dev server
+langgraph-cli[inmem]>=0.4.0
+
+# FastAPI backend
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.4
+python-dotenv>=1.0
+python-multipart>=0.0.9
+
+# Tests
+pytest>=8.0
+pytest-asyncio>=0.24
+httpx>=0.27
