@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import TypeVar
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -70,3 +71,50 @@ def invoke_structured(
                 )
 
     return StructuredResult(None, last_error, max_attempts, raw_last)
+
+
+# Same numbers as app/graph/graph.py's/app/voice/graph.py's own
+# LLM_RETRY_POLICY (max_attempts=5, initial_interval=2.0, backoff_factor=2.0)
+# - kept as plain constants here rather than a langgraph.types.RetryPolicy
+# since this retry has to work outside a StateGraph node (see
+# invoke_structured_with_retry's docstring).
+_TRANSIENT_RETRY_MAX_ATTEMPTS = 5
+_TRANSIENT_RETRY_INITIAL_INTERVAL_S = 2.0
+_TRANSIENT_RETRY_BACKOFF_FACTOR = 2.0
+
+
+def invoke_structured_with_retry(
+    llm,
+    persona: str,
+    user_prompt: str,
+    model_cls: type[ModelT],
+    max_attempts: int = 2,
+) -> StructuredResult:
+    """Same contract as invoke_structured() above, with an added outer retry
+    for transient upstream errors (rate limits, a momentary provider outage)
+    - langchain_openai surfaces these as a plain ValueError raised directly
+    out of llm.invoke(), which invoke_structured()'s own retry loop doesn't
+    catch (that loop only retries on invalid JSON/schema output - a
+    different failure mode, with different corrective feedback sent back to
+    the model).
+
+    LangGraph-node callers (app/graph/graph.py, app/voice/graph.py) already
+    get equivalent protection from their own node-level RetryPolicy, so
+    they call invoke_structured() directly rather than this wrapper - a
+    second retry layer here would stack with LangGraph's and turn a
+    persistent outage into several minutes of retries. This wrapper is for
+    invoke_structured()'s callers that have no LangGraph node to retry at:
+    app/voice/audio_reliability.py and app/entries/* (entry_architect.py,
+    verifier.py), all one-shot structured calls with no graph around them.
+    """
+    delay = _TRANSIENT_RETRY_INITIAL_INTERVAL_S
+    last_exc: Exception = ValueError("invoke_structured_with_retry: no attempts made")
+    for attempt in range(1, _TRANSIENT_RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return invoke_structured(llm, persona, user_prompt, model_cls, max_attempts)
+        except Exception as exc:  # noqa: BLE001 - deliberately broad: any upstream/transport failure
+            last_exc = exc
+            if attempt < _TRANSIENT_RETRY_MAX_ATTEMPTS:
+                time.sleep(delay)
+                delay *= _TRANSIENT_RETRY_BACKOFF_FACTOR
+    raise last_exc

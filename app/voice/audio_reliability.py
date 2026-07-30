@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.graph.model import get_chat_model
-from app.graph.structured import invoke_structured
+from app.graph.structured import invoke_structured_with_retry
 from app.voice import prompts
 from app.voice.confidence import transcription_confidence
 from app.voice.nodes import LlmFactory
@@ -46,8 +46,11 @@ def check_audio_reliability(
 
     llm = llm_factory()
     user_prompt = prompts.build_audio_clarity_user_prompt(transcript_result.text, score)
-    result = invoke_structured(
-        llm, prompts.AUDIO_CLARITY_PERSONA, user_prompt, AudioClarityMessage, max_attempts
-    )
-    spoken_message = result.model.spoken_message if result.model else _FALLBACK_MESSAGE
+    try:
+        result = invoke_structured_with_retry(
+            llm, prompts.AUDIO_CLARITY_PERSONA, user_prompt, AudioClarityMessage, max_attempts
+        )
+        spoken_message = result.model.spoken_message if result.model else _FALLBACK_MESSAGE
+    except Exception:  # noqa: BLE001 - persistent upstream failure after retries; fall back rather than crash
+        spoken_message = _FALLBACK_MESSAGE
     return AudioReliabilityResult(reliable=False, confidence=score, spoken_message=spoken_message)

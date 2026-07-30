@@ -21,6 +21,12 @@ data/runs/*
 !data/runs/.gitkeep
 data/notes/*
 !data/notes/.gitkeep
+data/voice_inbox/*
+!data/voice_inbox/.gitkeep
+data/notifications/*
+!data/notifications/.gitkeep
+data/entries/*
+!data/entries/.gitkeep
 
 # LangGraph CLI local state
 .langgraph_api/
