@@ -95,6 +95,29 @@ class EntryArchitectResult(BaseModel):
     )
 
 
+class EntryDraftReview(BaseModel):
+    """Output of the pre-write draft reviewer - see app/entries/nodes.py's
+    review_draft node. Runs BEFORE any Notion write, in the same
+    draft -> review -> bounded correction loop shape as the notes
+    pipeline's interpret_note -> grounding_review (app/voice/nodes.py) -
+    catches invented/overstated/misclassified content early enough to
+    actually fix it by re-drafting, rather than only after it's already
+    live in Notion (that's the separate, independent SemanticVerification
+    below, which checks the final written records instead)."""
+
+    grounded: bool = Field(
+        description="True only if the draft (Source and, if present, Van "
+        "Build Log fields) is fully supported by the transcript - no "
+        "invented specifics, no overstated certainty, no clear "
+        "misclassification"
+    )
+    issues: list[str] = Field(
+        default_factory=list,
+        description="Specific problems found, one per item - empty if grounded",
+    )
+    summary: str = Field(description="Brief internal reasoning - never spoken aloud")
+
+
 class SemanticVerification(BaseModel):
     """Output of the independent post-creation verifier - see
     app/entries/verifier.py. Judges faithfulness/usefulness of the records

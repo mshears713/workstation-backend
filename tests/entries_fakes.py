@@ -1,4 +1,7 @@
-from app.entries.schemas import EntryArchitectResult, SemanticVerification, SourceFields, VanBuildLogFields
+from langchain_core.messages import AIMessage
+
+from app.entries.schemas import EntryArchitectResult, EntryDraftReview, SemanticVerification, SourceFields, VanBuildLogFields
+from tests.fakes import _TITLE_RE
 
 VALID_SOURCE_FIELDS = SourceFields(
     name="Van 1 electrical: ran 12V line to fridge",
@@ -79,3 +82,51 @@ def fake_run_semantic_verifier_low(transcript, source_fields, van_build_log_fiel
         reason="Fake: van scope unclear.",
         spoken_question=SEMANTIC_SPOKEN_QUESTION,
     )
+
+
+# ---- Fakes for app/entries/graph.py's llm_factory (chat-model level, not
+# the run_entry_architect()-level fakes above) - same
+# "canned JSON keyed by schema title" convention as tests/fakes.py and
+# tests/voice_fakes.py. ----
+
+VALID_ENTRY_ARCHITECT_RESULT = EntryArchitectResult(
+    source=VALID_SOURCE_FIELDS, van_build_log=VALID_VAN_BUILD_LOG_FIELDS, clarification_message=""
+).model_dump_json()
+
+VALID_ENTRY_DRAFT_REVIEW = EntryDraftReview(
+    grounded=True, issues=[], summary="Fake review: draft is faithful to the transcript."
+).model_dump_json()
+
+UNGROUNDED_ENTRY_DRAFT_REVIEW = EntryDraftReview(
+    grounded=False,
+    issues=["Fake issue used only to exercise the correction loop in tests."],
+    summary="Fake review: flags an issue to trigger one correction pass.",
+).model_dump_json()
+
+ENTRIES_RESPONSES_BY_TITLE = {
+    "EntryArchitectResult": VALID_ENTRY_ARCHITECT_RESULT,
+    "EntryDraftReview": VALID_ENTRY_DRAFT_REVIEW,
+}
+
+
+class FakeEntryDraftCorrectionChatModel:
+    """Returns grounded=false on the first EntryDraftReview call, grounded=true
+    on the next, to exercise the bounded one-shot correction loop - same
+    shape as tests/voice_fakes.py's FakeGroundingCorrectionChatModel."""
+
+    def __init__(self):
+        self._review_calls = 0
+
+    def invoke(self, messages):
+        system_content = messages[0].content if messages else ""
+        match = _TITLE_RE.search(system_content)
+        title = match.group(1) if match else None
+        if title == "EntryDraftReview":
+            self._review_calls += 1
+            return AIMessage(
+                content=UNGROUNDED_ENTRY_DRAFT_REVIEW if self._review_calls == 1 else VALID_ENTRY_DRAFT_REVIEW
+            )
+        content = ENTRIES_RESPONSES_BY_TITLE.get(title)
+        if content is None:
+            raise RuntimeError(f"FakeEntryDraftCorrectionChatModel: no canned response for title={title!r}")
+        return AIMessage(content=content)
