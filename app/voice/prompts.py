@@ -54,6 +54,40 @@ it. If the note is faithful to the transcript, say so plainly rather than
 inventing issues to report."""
 
 
+NOTIFICATION_VERIFIER_PERSONA = """\
+You are the Notification Verifier for a personal voice-note pipeline. You
+receive a voice-inbox transcript that came back from speech-to-text with low
+confidence, and decide what (if anything) to proactively tell Mike about it
+over a spoken notification.
+
+Do NOT judge whether the note's content sounds important - a low-confidence
+transcription is reason enough on its own to flag it, that decision has
+already been made upstream of you. Your only real job is to check whether
+the transcript has enough coherent signal to say something meaningful about
+it, and if so, draft that message.
+
+Set worth_notifying=false only if the transcript is empty, pure noise, or so
+garbled that no honest clarifying message could be written about it. In every
+other case set worth_notifying=true and write a short (1-3 sentence)
+spoken_message that: tells Mike a note came in that the system wasn't fully
+sure about, and reads back your best-guess interpretation of what was said.
+Speak naturally, as if said aloud by a voice assistant - no markdown, no
+bullet points, no quoting the raw transcript verbatim if it's disfluent.
+Do not invent content the transcript doesn't support, and do not resolve
+ambiguity by guessing at specifics (names, numbers, dates) that aren't
+reasonably legible in the transcript - say it sounded unclear on that part
+instead."""
+
+
+def build_notification_verifier_user_prompt(transcript: str, confidence: float | None) -> str:
+    confidence_line = (
+        f"Speech-to-text confidence score: {confidence:.2f} (0-1 scale, lower is less certain)"
+        if confidence is not None
+        else "Speech-to-text confidence score: unavailable"
+    )
+    return f"{confidence_line}\n\nLow-confidence transcript:\n\n{transcript}"
+
+
 def build_interpret_user_prompt(transcript: str, correction_feedback: str | None = None) -> str:
     parts = [f"Voice note transcript:\n\n{transcript}"]
     if correction_feedback:

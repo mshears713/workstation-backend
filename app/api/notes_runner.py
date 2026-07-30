@@ -1,21 +1,14 @@
 import asyncio
-import re
 from typing import Any, Optional
 
 from app.api import notes_store as store
+from app.api.upload_validation import UploadValidationError as NoteValidationError
+from app.api.upload_validation import validate_upload
 from app.config import get_settings
 from app.voice import transcription
 from app.voice.graph import graph as graph  # re-exported; tests monkeypatch this name
 
 _background_tasks: set[asyncio.Task] = set()
-
-# Keeps the ESP32-supplied request_id safe to use directly as a directory
-# name (it becomes the note_id - see submit_note below).
-_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
-
-
-class NoteValidationError(Exception):
-    pass
 
 
 async def submit_note(
@@ -34,18 +27,7 @@ async def submit_note(
     both the idempotency key and the resource identifier used in
     /api/v1/notes/{note_id} URLs.
     """
-    if not request_id or not _SAFE_ID_RE.match(request_id):
-        raise NoteValidationError(
-            "request_id is required and must match ^[A-Za-z0-9_.-]{1,200}$"
-        )
-    if not source or not source.strip():
-        raise NoteValidationError("source is required")
-    if not audio_bytes:
-        raise NoteValidationError("audio file is empty")
-    if duration_seconds is not None and duration_seconds < 0:
-        raise NoteValidationError("duration_seconds must be >= 0")
-    if sample_rate_hz is not None and sample_rate_hz <= 0:
-        raise NoteValidationError("sample_rate_hz must be > 0")
+    validate_upload(request_id, source, audio_bytes, duration_seconds, sample_rate_hz)
 
     note_id = request_id
 

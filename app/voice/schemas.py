@@ -48,3 +48,24 @@ class FinalNoteResult(BaseModel):
     grounded: Optional[bool] = None
     correction_attempts: int = 0
     warnings: list[str] = Field(default_factory=list)
+
+
+class NotificationVerification(BaseModel):
+    """Output of the low-confidence-transcript verifier - see
+    app/voice/verifier.py. worth_notifying defaults toward true: the
+    confidence threshold already gated whether this runs at all, so this
+    model's only real judgment call is whether the transcript has enough
+    coherent signal to draft a meaningful spoken message, not whether the
+    note's content is important."""
+
+    worth_notifying: bool = Field(
+        description="False only if the transcript is too incoherent/empty of "
+        "signal to say anything meaningful about - not a judgment of importance"
+    )
+    spoken_message: str = Field(
+        default="",
+        description="Short (1-3 sentence) message to read aloud, e.g. "
+        '"I caught a note but wasn\'t fully sure - it sounded like: ...". '
+        "Empty if worth_notifying is false.",
+    )
+    reasoning: str = Field(description="Brief internal reasoning - never spoken aloud")

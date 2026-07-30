@@ -25,10 +25,23 @@ class Settings(BaseSettings):
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
     openai_transcription_language: str = "en"
 
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "alloy"
+
+    # Below this, a voice-inbox transcript is routed to the notification
+    # verifier instead of going straight to Notion - see
+    # app/voice/confidence.py for how the score itself is computed.
+    voice_confidence_threshold: float = 0.55
+
     data_dir: str = "data/runs"
     notes_data_dir: str = "data/notes"
+    voice_inbox_data_dir: str = "data/voice_inbox"
+    notifications_data_dir: str = "data/notifications"
     reviewer_max_attempts: int = 2
     request_timeout_seconds: int = 60
+
+    notion_api_key: str = ""
+    notion_voice_inbox_data_source_id: str = "a250d3f5-ae1f-471c-97da-47cd94f596d0"
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -49,6 +62,20 @@ class Settings(BaseSettings):
     @property
     def notes_data_dir_path(self) -> Path:
         path = Path(self.notes_data_dir)
+        if not path.is_absolute():
+            path = _PROJECT_ROOT / path
+        return path
+
+    @property
+    def voice_inbox_data_dir_path(self) -> Path:
+        path = Path(self.voice_inbox_data_dir)
+        if not path.is_absolute():
+            path = _PROJECT_ROOT / path
+        return path
+
+    @property
+    def notifications_data_dir_path(self) -> Path:
+        path = Path(self.notifications_data_dir)
         if not path.is_absolute():
             path = _PROJECT_ROOT / path
         return path
