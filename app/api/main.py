@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Response, status
 
 from app.api import runner, store
+from app.api.entries_router import router as entries_router
 from app.api.notes_router import router as notes_router
 from app.api.notifications_router import router as notifications_router
 from app.api.voice_inbox_router import router as voice_inbox_router
@@ -23,6 +24,7 @@ app = FastAPI(title="Operation Homebound Stage 2", version="0.1.0")
 app.include_router(notes_router)
 app.include_router(voice_inbox_router)
 app.include_router(notifications_router)
+app.include_router(entries_router)
 
 
 @app.get("/health")

@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 import httpx
 
@@ -55,6 +55,143 @@ def _chunk_transcript(text: str) -> list[str]:
     return chunks
 
 
+def _rich_text_property(text: str) -> dict[str, Any]:
+    """Same chunking as create_voice_inbox_page's Original Transcript field,
+    factored out so create_source_page()/create_van_build_log_page() (which
+    each have several rich_text properties) don't repeat it. An empty
+    string still produces one empty-content block, a valid Notion state."""
+    return {"rich_text": [{"text": {"content": block}} for block in _chunk_transcript(text)]}
+
+
+def _post_page(parent_data_source_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+    """Shared POST /pages call - create_voice_inbox_page()/create_source_page()/
+    create_van_build_log_page() only differ in which data source and
+    properties they send."""
+    settings = get_settings()
+    api_key = _require_api_key()
+
+    response = httpx.post(
+        f"{NOTION_API_BASE_URL}/pages",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Notion-Version": NOTION_API_VERSION,
+            "Content-Type": "application/json",
+        },
+        json={
+            "parent": {"type": "data_source_id", "data_source_id": parent_data_source_id},
+            "properties": properties,
+        },
+        timeout=settings.request_timeout_seconds,
+    )
+    if response.status_code >= 300:
+        raise NotionClientError(f"Notion page creation failed: {response.status_code} {response.text}")
+
+    body = response.json()
+    return {"id": body.get("id"), "url": body.get("url")}
+
+
+def create_source_page(
+    name: str,
+    cue: str,
+    summary: str,
+    observation: str,
+    open_questions: str,
+    capture_confidence: str,
+    captured_at: datetime,
+    source_type: str = "Voice Note",
+    status: str = "Captured",
+    promotion_readiness: str = "Raw",
+    potential_destination: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Creates a page in the AI-OS Sources database from the entry
+    architect's SourceFields (see app/entries/schemas.py) plus a few
+    deterministic fields entries_runner.py sets itself: source_type/status/
+    promotion_readiness default to fixed values for every voice-captured
+    entry from this pipeline, and capture_confidence comes from the
+    audio-reliability score's tier, not the LLM. Returns {"id": ..., "url": ...}.
+    Raises NotionClientError on any non-2xx response.
+    """
+    if captured_at.tzinfo is None:
+        raise NotionClientError(
+            "captured_at must be timezone-aware - a naive datetime would silently "
+            "write the wrong instant (or get rejected) as Notion's Captured property"
+        )
+
+    settings = get_settings()
+    properties: dict[str, Any] = {
+        "Name": {"title": [{"text": {"content": name}}]},
+        "Cue": _rich_text_property(cue),
+        "Summary": _rich_text_property(summary),
+        "Observation": _rich_text_property(observation),
+        "Open Questions": _rich_text_property(open_questions),
+        "Captured": {"date": {"start": captured_at.isoformat()}},
+        "Status": {"select": {"name": status}},
+        "Source Type": {"select": {"name": source_type}},
+        "Promotion Readiness": {"select": {"name": promotion_readiness}},
+        "Capture Confidence": {"select": {"name": capture_confidence}},
+    }
+    if potential_destination:
+        properties["Potential Destination"] = {"multi_select": [{"name": d} for d in potential_destination]}
+
+    return _post_page(settings.notion_sources_data_source_id, properties)
+
+
+def create_van_build_log_page(
+    name: str,
+    van_or_scope: str,
+    entry_type: str,
+    workstream: str,
+    allocation: str,
+    summary: str,
+    source_page_id: str,
+    module_or_component: str = "",
+    amount: Optional[float] = None,
+    labor_hours: Optional[float] = None,
+    documentation_value: str = "Unknown",
+    date: Optional[datetime] = None,
+    status: str = "Logged",
+    media_status: str = "None",
+) -> dict[str, Any]:
+    """Creates a page in the Van Build Log database from the entry
+    architect's VanBuildLogFields (see app/entries/schemas.py), linked back
+    to the Source page via the Source Record relation. media_status
+    defaults to "None" (this pipeline has no photo-capture capability) and
+    status defaults to "Logged" - both deterministic, not LLM-chosen.
+    amount/labor_hours are omitted entirely (not sent as null) when absent,
+    since Notion's number property doesn't need a present-but-empty entry.
+    Returns {"id": ..., "url": ...}. Raises NotionClientError on any non-2xx
+    response.
+    """
+    entry_date = date or datetime.now(timezone.utc)
+    if entry_date.tzinfo is None:
+        raise NotionClientError(
+            "date must be timezone-aware - a naive datetime would silently "
+            "write the wrong instant (or get rejected) as Notion's Date property"
+        )
+
+    settings = get_settings()
+    properties: dict[str, Any] = {
+        "Name": {"title": [{"text": {"content": name}}]},
+        "Van / Scope": {"select": {"name": van_or_scope}},
+        "Entry Type": {"select": {"name": entry_type}},
+        "Workstream": {"select": {"name": workstream}},
+        "Allocation": {"select": {"name": allocation}},
+        "Documentation Value": {"select": {"name": documentation_value}},
+        "Media Status": {"select": {"name": media_status}},
+        "Status": {"select": {"name": status}},
+        "Date": {"date": {"start": entry_date.isoformat()}},
+        "Summary": _rich_text_property(summary),
+        "Module / Component": _rich_text_property(module_or_component),
+        "Source Record": {"relation": [{"id": source_page_id}]},
+    }
+    if amount is not None:
+        properties["Amount"] = {"number": amount}
+    if labor_hours is not None:
+        properties["Labor Hours"] = {"number": labor_hours}
+
+    return _post_page(settings.notion_van_build_log_data_source_id, properties)
+
+
 def create_voice_inbox_page(name: str, captured_at: datetime, transcript: str) -> dict[str, Any]:
     """Creates a page in the Voice Inbox Notion database with only the four
     fields this pipeline owns - Name, Captured At, Source (always
@@ -70,40 +207,11 @@ def create_voice_inbox_page(name: str, captured_at: datetime, transcript: str) -
         )
 
     settings = get_settings()
-    api_key = _require_api_key()
-
-    transcript_blocks = _chunk_transcript(transcript)
-
-    payload = {
-        "parent": {
-            "type": "data_source_id",
-            "data_source_id": settings.notion_voice_inbox_data_source_id,
-        },
-        "properties": {
-            "Name": {"title": [{"text": {"content": name}}]},
-            "Captured At": {"date": {"start": captured_at.isoformat()}},
-            "Source": {"select": {"name": "Workstation"}},
-            "Original Transcript": {
-                "rich_text": [{"text": {"content": block}} for block in transcript_blocks]
-            },
-            "Status": {"select": {"name": "New"}},
-        },
+    properties = {
+        "Name": {"title": [{"text": {"content": name}}]},
+        "Captured At": {"date": {"start": captured_at.isoformat()}},
+        "Source": {"select": {"name": "Workstation"}},
+        "Original Transcript": _rich_text_property(transcript),
+        "Status": {"select": {"name": "New"}},
     }
-
-    response = httpx.post(
-        f"{NOTION_API_BASE_URL}/pages",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Notion-Version": NOTION_API_VERSION,
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=settings.request_timeout_seconds,
-    )
-    if response.status_code >= 300:
-        raise NotionClientError(
-            f"Notion page creation failed: {response.status_code} {response.text}"
-        )
-
-    body = response.json()
-    return {"id": body.get("id"), "url": body.get("url")}
+    return _post_page(settings.notion_voice_inbox_data_source_id, properties)

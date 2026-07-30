@@ -39,11 +39,14 @@ class Settings(BaseSettings):
     notes_data_dir: str = "data/notes"
     voice_inbox_data_dir: str = "data/voice_inbox"
     notifications_data_dir: str = "data/notifications"
+    entries_data_dir: str = "data/entries"
     reviewer_max_attempts: int = 2
     request_timeout_seconds: int = 60
 
     notion_api_key: str = ""
     notion_voice_inbox_data_source_id: str = "a250d3f5-ae1f-471c-97da-47cd94f596d0"
+    notion_sources_data_source_id: str = "6b0b9164-c5eb-4015-9bf4-b01ebfd938e2"
+    notion_van_build_log_data_source_id: str = "342c88fc-e138-46ed-af22-ecf4717bdffb"
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -78,6 +81,13 @@ class Settings(BaseSettings):
     @property
     def notifications_data_dir_path(self) -> Path:
         path = Path(self.notifications_data_dir)
+        if not path.is_absolute():
+            path = _PROJECT_ROOT / path
+        return path
+
+    @property
+    def entries_data_dir_path(self) -> Path:
+        path = Path(self.entries_data_dir)
         if not path.is_absolute():
             path = _PROJECT_ROOT / path
         return path

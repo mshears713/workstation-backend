@@ -12,6 +12,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("NOTES_DATA_DIR", str(tmp_path / "notes"))
     monkeypatch.setenv("VOICE_INBOX_DATA_DIR", str(tmp_path / "voice_inbox"))
     monkeypatch.setenv("NOTIFICATIONS_DATA_DIR", str(tmp_path / "notifications"))
+    monkeypatch.setenv("ENTRIES_DATA_DIR", str(tmp_path / "entries"))
     monkeypatch.setenv("LANGSMITH_TRACING", "false")
     monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
     get_settings.cache_clear()
