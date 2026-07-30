@@ -28,10 +28,12 @@ class Settings(BaseSettings):
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "alloy"
 
-    # Below this, a voice-inbox transcript is routed to the notification
-    # verifier instead of going straight to Notion - see
-    # app/voice/confidence.py for how the score itself is computed.
-    voice_confidence_threshold: float = 0.55
+    # Below this, a transcript is treated as unreliably heard and routed to
+    # the shared audio-reliability notification instead of continuing into
+    # either pipeline (NOTE's Notion write or GO's entry architect) - see
+    # app/voice/confidence.py for how the score itself is computed and
+    # app/voice/audio_reliability.py for how both pipelines use it.
+    audio_confidence_threshold: float = 0.55
 
     data_dir: str = "data/runs"
     notes_data_dir: str = "data/notes"

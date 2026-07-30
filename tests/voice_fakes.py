@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage
 
-from app.voice.schemas import GroundingReport, InterpretedNote, NotificationVerification, PossibleActions
+from app.voice.audio_reliability import AudioReliabilityResult
+from app.voice.schemas import GroundingReport, InterpretedNote, PossibleActions
 from app.voice.transcription import TranscriptionResult
 from tests.fakes import _TITLE_RE
 
@@ -94,8 +95,9 @@ def fake_create_voice_inbox_page_failing(name, captured_at, transcript):
 
 
 # Mean logprob of -5.0 -> math.exp(-5.0) =~ 0.0067, comfortably below the
-# default voice_confidence_threshold (0.55) - used to exercise the
-# low-confidence -> verifier -> notification branch in voice_inbox_runner.py.
+# default audio_confidence_threshold (0.55) - used to exercise the
+# unreliable-audio -> notification branch shared by voice_inbox_runner.py
+# (NOTE) and entries_runner.py (GO).
 LOW_CONFIDENCE_LOGPROBS = [{"token": "mumble", "bytes": [], "logprob": -5.0}]
 
 
@@ -109,34 +111,19 @@ def fake_transcribe_audio_low_confidence(audio_path):
     )
 
 
-FAKE_SPOKEN_MESSAGE = (
-    "I caught a note but wasn't fully sure - it sounded like something about "
-    "the van door hinge."
-)
-
-VALID_NOTIFICATION_VERIFICATION = NotificationVerification(
-    worth_notifying=True,
-    spoken_message=FAKE_SPOKEN_MESSAGE,
-    reasoning="Fake verifier response for testing: transcript has enough signal.",
-).model_dump_json()
-
-NOT_WORTH_NOTIFYING_VERIFICATION = NotificationVerification(
-    worth_notifying=False,
-    spoken_message="",
-    reasoning="Fake verifier response for testing: transcript is incoherent.",
-).model_dump_json()
+FAKE_SPOKEN_MESSAGE = "I didn't catch that recording clearly - could you say that again?"
 
 
-def fake_verify_worth_notifying(transcript, confidence, **kwargs):
-    return NotificationVerification.model_validate_json(VALID_NOTIFICATION_VERIFICATION)
+def fake_check_audio_reliability_unreliable(transcript_result, threshold, **kwargs):
+    return AudioReliabilityResult(reliable=False, confidence=0.02, spoken_message=FAKE_SPOKEN_MESSAGE)
 
 
-def fake_verify_not_worth_notifying(transcript, confidence, **kwargs):
-    return NotificationVerification.model_validate_json(NOT_WORTH_NOTIFYING_VERIFICATION)
+def fake_check_audio_reliability_reliable(transcript_result, threshold, **kwargs):
+    return AudioReliabilityResult(reliable=True, confidence=0.99)
 
 
-def fake_verify_raising(transcript, confidence, **kwargs):
-    raise RuntimeError("Simulated verifier failure for testing.")
+def fake_check_audio_reliability_raising(transcript_result, threshold, **kwargs):
+    raise RuntimeError("Simulated audio-reliability check failure for testing.")
 
 
 FAKE_TTS_AUDIO_BYTES = b"FAKE-PCM-AUDIO-BYTES"

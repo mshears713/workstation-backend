@@ -50,22 +50,20 @@ class FinalNoteResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class NotificationVerification(BaseModel):
-    """Output of the low-confidence-transcript verifier - see
-    app/voice/verifier.py. worth_notifying defaults toward true: the
-    confidence threshold already gated whether this runs at all, so this
-    model's only real judgment call is whether the transcript has enough
-    coherent signal to draft a meaningful spoken message, not whether the
-    note's content is important."""
+class AudioClarityMessage(BaseModel):
+    """Output of the shared audio-reliability check - see
+    app/voice/audio_reliability.py. Only ever invoked once transcription
+    confidence has already been measured below threshold, so there's no
+    separate "is this worth mentioning" judgment call here (unlike the old
+    NotificationVerification this replaces) - low confidence alone is
+    reason enough to ask for a repeat. The model's only job is to phrase
+    that naturally, referencing the best-guess content only if it's legible
+    enough to be useful."""
 
-    worth_notifying: bool = Field(
-        description="False only if the transcript is too incoherent/empty of "
-        "signal to say anything meaningful about - not a judgment of importance"
-    )
     spoken_message: str = Field(
-        default="",
-        description="Short (1-3 sentence) message to read aloud, e.g. "
-        '"I caught a note but wasn\'t fully sure - it sounded like: ...". '
-        "Empty if worth_notifying is false.",
+        description="Short (1-2 sentence) natural spoken message telling "
+        "Mike a recording came in that wasn't caught clearly, asking him to "
+        "repeat or clarify it. Reference the best-guess transcript only if "
+        "doing so would actually help him recognize what he said; otherwise "
+        "just ask him to say it again."
     )
-    reasoning: str = Field(description="Brief internal reasoning - never spoken aloud")

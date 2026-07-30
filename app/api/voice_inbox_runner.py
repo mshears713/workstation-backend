@@ -1,19 +1,17 @@
 import asyncio
 import logging
-import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from app.api import notifications_store
 from app.api import voice_inbox_store as store
+from app.api.notification_delivery import notify_audio_unreliable
 from app.api.upload_validation import UploadValidationError as VoiceInboxValidationError
 from app.api.upload_validation import validate_upload
 from app.config import get_settings
 from app.integrations import notion_client
-from app.voice import transcription, tts
-from app.voice.confidence import is_low_confidence, transcription_confidence
+from app.voice import transcription
+from app.voice.audio_reliability import check_audio_reliability
 from app.voice.transcription import TranscriptionResult
-from app.voice.verifier import verify_low_confidence_transcript
 
 log = logging.getLogger("voice_inbox_runner")
 
@@ -63,42 +61,34 @@ async def submit_voice_inbox_item(
     return record, False
 
 
-async def _maybe_create_notification(voice_inbox_id: str, transcription_result: TranscriptionResult) -> None:
-    """Best-effort side channel off the main voice-inbox pipeline: low
-    transcription confidence -> ask the verifier whether it's worth a spoken
-    notification -> if so, generate TTS and create the notification record.
+async def _maybe_notify_audio_unreliable(voice_inbox_id: str, transcription_result: TranscriptionResult) -> None:
+    """Best-effort side channel off the main voice-inbox pipeline, using the
+    audio-reliability check shared with the GO/entries pipeline (see
+    app/voice/audio_reliability.py). Unlike GO, NOTE does NOT stop here on
+    an unreliable recording - it still proceeds to create the Notion page
+    exactly as it always has (Notion's own AI automation still fills in
+    Category/Processing Notes) - this only ever adds a notification on top,
+    never gates NOTE's existing behavior. See _execute, which calls this
+    and then continues to "sending_to_notion" unconditionally either way.
 
-    Deliberately never raises - a failure anywhere in this path (verifier
-    call, TTS call, disk write) is logged and swallowed, not surfaced as a
-    voice-inbox failure. The Notion page is the pipeline's primary contract
-    and must still get created regardless of what happens here (see
-    _execute, which continues to "sending_to_notion" unconditionally after
-    this returns).
+    Deliberately never raises - a failure in the reliability check itself
+    (not just in notify_audio_unreliable's own delivery step) must not fail
+    the voice-inbox item either.
     """
-    settings = get_settings()
-    confidence = transcription_confidence(transcription_result)
-    if not is_low_confidence(transcription_result, settings.voice_confidence_threshold):
-        return
-
     try:
-        verification = await asyncio.to_thread(
-            verify_low_confidence_transcript, transcription_result.text, confidence
+        settings = get_settings()
+        # check_audio_reliability may make a blocking LLM call (only when
+        # confidence is actually low) - same asyncio.to_thread treatment
+        # every other network call in this file gets, so a slow/low-
+        # confidence transcript can't stall the event loop.
+        result = await asyncio.to_thread(
+            check_audio_reliability, transcription_result, settings.audio_confidence_threshold
         )
-        if not verification.worth_notifying:
+        if result.reliable:
             return
-
-        audio_bytes = await asyncio.to_thread(tts.synthesize_speech, verification.spoken_message)
-        notification_id = str(uuid.uuid4())
-        notifications_store.create_notification(
-            notification_id=notification_id,
-            source_voice_inbox_id=voice_inbox_id,
-            transcript=transcription_result.text,
-            confidence=confidence,
-            spoken_message=verification.spoken_message,
-            audio_bytes=audio_bytes,
-        )
+        await notify_audio_unreliable(voice_inbox_id, transcription_result.text, result)
     except Exception as exc:  # noqa: BLE001 - see docstring: must never fail the voice-inbox item
-        log.warning("notification creation failed for voice_inbox_id=%s: %r", voice_inbox_id, exc)
+        log.warning("audio-reliability check failed for voice_inbox_id=%s: %r", voice_inbox_id, exc)
 
 
 async def _execute(voice_inbox_id: str) -> None:
@@ -111,7 +101,7 @@ async def _execute(voice_inbox_id: str) -> None:
         transcription_result = await asyncio.to_thread(transcription.transcribe_audio, audio_path)
         store.record_transcription(voice_inbox_id, transcription_result.model_dump())
 
-        await _maybe_create_notification(voice_inbox_id, transcription_result)
+        await _maybe_notify_audio_unreliable(voice_inbox_id, transcription_result)
 
         store.mark_status(voice_inbox_id, "sending_to_notion")
 

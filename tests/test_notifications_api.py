@@ -2,19 +2,18 @@ import time
 
 from fastapi.testclient import TestClient
 
-from app.api import voice_inbox_runner
+from app.api import notification_delivery, voice_inbox_runner
 from app.api.main import app
 from tests.voice_fakes import (
     FAKE_SPOKEN_MESSAGE,
     FAKE_TTS_AUDIO_BYTES,
+    fake_check_audio_reliability_raising,
+    fake_check_audio_reliability_unreliable,
     fake_create_voice_inbox_page,
     fake_synthesize_speech,
     fake_synthesize_speech_raising,
     fake_transcribe_audio,
     fake_transcribe_audio_low_confidence,
-    fake_verify_not_worth_notifying,
-    fake_verify_raising,
-    fake_verify_worth_notifying,
 )
 
 FAKE_AUDIO_BYTES = b"RIFF....WAVEfake-audio-content-for-tests"
@@ -39,19 +38,21 @@ def _poll_until_terminal(client, voice_inbox_id, timeout=5.0):
     return status
 
 
-def _patch_happy_low_confidence(monkeypatch):
+def _patch_happy_unreliable_audio(monkeypatch):
     monkeypatch.setattr(voice_inbox_runner.transcription, "transcribe_audio", fake_transcribe_audio_low_confidence)
-    monkeypatch.setattr(voice_inbox_runner, "verify_low_confidence_transcript", fake_verify_worth_notifying)
-    monkeypatch.setattr(voice_inbox_runner.tts, "synthesize_speech", fake_synthesize_speech)
+    monkeypatch.setattr(voice_inbox_runner, "check_audio_reliability", fake_check_audio_reliability_unreliable)
+    monkeypatch.setattr(notification_delivery.tts, "synthesize_speech", fake_synthesize_speech)
     monkeypatch.setattr(voice_inbox_runner.notion_client, "create_voice_inbox_page", fake_create_voice_inbox_page)
 
 
-def test_low_confidence_worth_notifying_creates_pending_notification(monkeypatch):
-    _patch_happy_low_confidence(monkeypatch)
+def test_unreliable_audio_creates_pending_notification_and_still_completes_to_notion(monkeypatch):
+    _patch_happy_unreliable_audio(monkeypatch)
 
     with TestClient(app) as client:
         resp = _upload(client, request_id="notif-happy-1")
         voice_inbox_id = resp.json()["voice_inbox_id"]
+        # NOTE's Notion-AI workflow is unchanged by an unreliable recording -
+        # the item still finishes normally, the notification is additive.
         assert _poll_until_terminal(client, voice_inbox_id) == "completed"
 
         pending = client.get("/api/v1/notifications/pending")
@@ -89,12 +90,12 @@ def test_low_confidence_worth_notifying_creates_pending_notification(monkeypatch
         }
 
 
-def test_high_confidence_transcript_never_creates_notification(monkeypatch):
+def test_reliable_audio_never_creates_notification(monkeypatch):
     monkeypatch.setattr(voice_inbox_runner.transcription, "transcribe_audio", fake_transcribe_audio)
     monkeypatch.setattr(voice_inbox_runner.notion_client, "create_voice_inbox_page", fake_create_voice_inbox_page)
 
     with TestClient(app) as client:
-        resp = _upload(client, request_id="notif-high-confidence-1")
+        resp = _upload(client, request_id="notif-reliable-1")
         voice_inbox_id = resp.json()["voice_inbox_id"]
         assert _poll_until_terminal(client, voice_inbox_id) == "completed"
 
@@ -102,27 +103,13 @@ def test_high_confidence_transcript_never_creates_notification(monkeypatch):
         assert pending.json()["pending"] is False
 
 
-def test_low_confidence_but_verifier_declines_creates_no_notification(monkeypatch):
+def test_audio_reliability_check_failure_does_not_fail_voice_inbox_item(monkeypatch):
     monkeypatch.setattr(voice_inbox_runner.transcription, "transcribe_audio", fake_transcribe_audio_low_confidence)
-    monkeypatch.setattr(voice_inbox_runner, "verify_low_confidence_transcript", fake_verify_not_worth_notifying)
+    monkeypatch.setattr(voice_inbox_runner, "check_audio_reliability", fake_check_audio_reliability_raising)
     monkeypatch.setattr(voice_inbox_runner.notion_client, "create_voice_inbox_page", fake_create_voice_inbox_page)
 
     with TestClient(app) as client:
-        resp = _upload(client, request_id="notif-declined-1")
-        voice_inbox_id = resp.json()["voice_inbox_id"]
-        assert _poll_until_terminal(client, voice_inbox_id) == "completed"
-
-        pending = client.get("/api/v1/notifications/pending")
-        assert pending.json()["pending"] is False
-
-
-def test_verifier_failure_does_not_fail_voice_inbox_item(monkeypatch):
-    monkeypatch.setattr(voice_inbox_runner.transcription, "transcribe_audio", fake_transcribe_audio_low_confidence)
-    monkeypatch.setattr(voice_inbox_runner, "verify_low_confidence_transcript", fake_verify_raising)
-    monkeypatch.setattr(voice_inbox_runner.notion_client, "create_voice_inbox_page", fake_create_voice_inbox_page)
-
-    with TestClient(app) as client:
-        resp = _upload(client, request_id="notif-verifier-fails-1")
+        resp = _upload(client, request_id="notif-check-fails-1")
         voice_inbox_id = resp.json()["voice_inbox_id"]
         # The Notion pipeline is the primary contract - it must still
         # complete even though the notification side channel blew up.
@@ -132,8 +119,8 @@ def test_verifier_failure_does_not_fail_voice_inbox_item(monkeypatch):
 
 def test_tts_failure_does_not_fail_voice_inbox_item(monkeypatch):
     monkeypatch.setattr(voice_inbox_runner.transcription, "transcribe_audio", fake_transcribe_audio_low_confidence)
-    monkeypatch.setattr(voice_inbox_runner, "verify_low_confidence_transcript", fake_verify_worth_notifying)
-    monkeypatch.setattr(voice_inbox_runner.tts, "synthesize_speech", fake_synthesize_speech_raising)
+    monkeypatch.setattr(voice_inbox_runner, "check_audio_reliability", fake_check_audio_reliability_unreliable)
+    monkeypatch.setattr(notification_delivery.tts, "synthesize_speech", fake_synthesize_speech_raising)
     monkeypatch.setattr(voice_inbox_runner.notion_client, "create_voice_inbox_page", fake_create_voice_inbox_page)
 
     with TestClient(app) as client:
@@ -144,7 +131,7 @@ def test_tts_failure_does_not_fail_voice_inbox_item(monkeypatch):
 
 
 def test_multiple_pending_notifications_are_fifo_and_counted(monkeypatch):
-    _patch_happy_low_confidence(monkeypatch)
+    _patch_happy_unreliable_audio(monkeypatch)
 
     with TestClient(app) as client:
         first = _upload(client, request_id="notif-fifo-1")
@@ -178,7 +165,7 @@ def test_unknown_notification_id_returns_404():
 
 
 def test_acking_already_delivered_notification_is_idempotent(monkeypatch):
-    _patch_happy_low_confidence(monkeypatch)
+    _patch_happy_unreliable_audio(monkeypatch)
 
     with TestClient(app) as client:
         resp = _upload(client, request_id="notif-double-ack-1")
