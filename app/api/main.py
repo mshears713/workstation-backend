@@ -8,6 +8,7 @@ from app.api import runner, store
 from app.api.entries_router import router as entries_router
 from app.api.notes_router import router as notes_router
 from app.api.notifications_router import router as notifications_router
+from app.api.remote_router import router as remote_router
 from app.api.voice_inbox_router import router as voice_inbox_router
 from app.api.schemas import (
     HandshakeRequest,
@@ -25,6 +26,7 @@ app.include_router(notes_router)
 app.include_router(voice_inbox_router)
 app.include_router(notifications_router)
 app.include_router(entries_router)
+app.include_router(remote_router)
 
 
 @app.get("/health")
