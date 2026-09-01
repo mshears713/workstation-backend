@@ -18,7 +18,10 @@ def validate_upload(
 ) -> None:
     """Shared validation for the two ESP32 audio-upload endpoints
     (/api/v1/notes and /api/v1/voice-inbox) - same contract, same checks."""
-    if not request_id or not SAFE_ID_RE.match(request_id):
+    # "." and ".." satisfy SAFE_ID_RE (it allows dots) but are path
+    # traversal once request_id is used as the per-item directory name in
+    # the *_store modules, so they are excluded explicitly.
+    if not request_id or not SAFE_ID_RE.match(request_id) or request_id in {".", ".."}:
         raise UploadValidationError(
             "request_id is required and must match ^[A-Za-z0-9_.-]{1,200}$"
         )

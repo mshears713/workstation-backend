@@ -80,15 +80,26 @@ async def create_entry(
 
 
 @router.post("/{request_id}/chunk", status_code=status.HTTP_202_ACCEPTED)
-async def upload_entry_chunk(request_id: str, request: Request) -> dict:
+async def upload_entry_chunk(request_id: str, request: Request, offset: int | None = None) -> dict:
     """Raw PCM bytes as the whole request body - see
     main/stream_upload.c's chunk POST, one call per ~15s of recording
     (main/audio_capture.c). No JSON wrapper: the body IS the audio, same
     "don't re-encode bytes that are already binary" reasoning the old
-    Mission 10 /api/v1/audio endpoint used."""
+    Mission 10 /api/v1/audio endpoint used.
+
+    `offset` is the byte position this chunk starts at, used by
+    streaming_capture.append_chunk() as the ordering guard - see its
+    docstring. Optional so firmware predating the guard still works."""
     data = await request.body()
-    total = streaming_capture.append_chunk(_STREAMING_KIND, request_id, data)
-    return {"received_bytes": len(data), "total_bytes": total}
+    try:
+        total, duplicate = streaming_capture.append_chunk(
+            _STREAMING_KIND, request_id, data, offset=offset
+        )
+    except runner.EntryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except streaming_capture.ChunkOrderError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return {"received_bytes": len(data), "total_bytes": total, "duplicate": duplicate}
 
 
 @router.post("/{request_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
@@ -96,7 +107,10 @@ async def cancel_entry_chunk(request_id: str) -> dict:
     """CANCEL button's counterpart to /finish - discards whatever chunks
     already arrived for request_id instead of assembling and processing
     them. See main/audio_capture.c's cancel path (audio_capture_cancel())."""
-    streaming_capture.discard_chunks(_STREAMING_KIND, request_id)
+    try:
+        streaming_capture.discard_chunks(_STREAMING_KIND, request_id)
+    except runner.EntryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return {"request_id": request_id, "status": "cancelled"}
 
 
@@ -115,7 +129,10 @@ async def finish_entry(
     and hands off to the exact same runner.submit_entry() path create_entry()
     uses, so everything past this point (transcription, entry architect,
     Notion, semantic verification) is identical to the single-shot flow."""
-    audio_bytes = streaming_capture.finalize_wav(_STREAMING_KIND, request_id, sample_rate_hz, bits_per_sample, channels)
+    try:
+        audio_bytes = streaming_capture.finalize_wav(_STREAMING_KIND, request_id, sample_rate_hz, bits_per_sample, channels)
+    except runner.EntryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     block_align = channels * (bits_per_sample // 8)
     duration_seconds = (
