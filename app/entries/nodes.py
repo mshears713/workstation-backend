@@ -50,7 +50,9 @@ def make_draft_entry_node(llm_factory: LlmFactory):
             correction_attempts += 1
             feedback = _issues_as_feedback(state["review"])
 
-        user_prompt = prompts.build_entry_architect_user_prompt(state["transcript"], feedback)
+        user_prompt = prompts.build_entry_architect_user_prompt(
+            state["transcript"], feedback, state.get("project_hint")
+        )
         result = invoke_structured(
             llm, prompts.ENTRY_ARCHITECT_PERSONA, user_prompt, EntryArchitectResult, max_attempts
         )
@@ -84,7 +86,9 @@ def make_review_draft_node(llm_factory: LlmFactory):
         llm = llm_factory()
         max_attempts = state.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
 
-        user_prompt = prompts.build_draft_review_user_prompt(state["transcript"], state.get("draft") or {})
+        user_prompt = prompts.build_draft_review_user_prompt(
+            state["transcript"], state.get("draft") or {}, state.get("project_hint")
+        )
         result = invoke_structured(
             llm, prompts.DRAFT_REVIEW_PERSONA, user_prompt, EntryDraftReview, max_attempts
         )

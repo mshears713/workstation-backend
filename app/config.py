@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     voice_inbox_data_dir: str = "data/voice_inbox"
     notifications_data_dir: str = "data/notifications"
     entries_data_dir: str = "data/entries"
+    # Transient accumulation buffer for chunked ESP32 recordings (see
+    # app/api/streaming_capture.py) - not one of the "final artifact" dirs
+    # above, entries are deleted as soon as a capture finalizes.
+    streaming_tmp_dir: str = "data/_streaming_tmp"
     reviewer_max_attempts: int = 2
     request_timeout_seconds: int = 60
 
@@ -88,6 +92,13 @@ class Settings(BaseSettings):
     @property
     def entries_data_dir_path(self) -> Path:
         path = Path(self.entries_data_dir)
+        if not path.is_absolute():
+            path = _PROJECT_ROOT / path
+        return path
+
+    @property
+    def streaming_tmp_dir_path(self) -> Path:
+        path = Path(self.streaming_tmp_dir)
         if not path.is_absolute():
             path = _PROJECT_ROOT / path
         return path

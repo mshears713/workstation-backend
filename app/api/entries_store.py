@@ -60,12 +60,19 @@ def save_audio(entry_id: str, filename: Optional[str], content: bytes) -> dict[s
     return {"stored_filename": audio_path.name, "size_bytes": len(content)}
 
 
-def create_item(entry_id: str, request_id: str, source: str, audio_meta: dict[str, Any]) -> dict[str, Any]:
+def create_item(
+    entry_id: str,
+    request_id: str,
+    source: str,
+    audio_meta: dict[str, Any],
+    project_hint: Optional[str] = None,
+) -> dict[str, Any]:
     now = _now()
     record = {
         "entry_id": entry_id,
         "request_id": request_id,
         "source": source,
+        "project_hint": project_hint,
         "status": "accepted",
         "created_at": now,
         "updated_at": now,

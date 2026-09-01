@@ -13,6 +13,7 @@ DEFAULT_MAX_ATTEMPTS = 2
 
 def run_entry_architect(
     transcript: str,
+    project_hint: Optional[str] = None,
     llm_factory: LlmFactory = get_chat_model,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> Optional[EntryArchitectResult]:
@@ -32,7 +33,9 @@ def run_entry_architect(
     """
     g = _default_graph if llm_factory is get_chat_model else build_graph(llm_factory)
     try:
-        result_state = g.invoke({"transcript": transcript, "max_attempts": max_attempts})
+        result_state = g.invoke(
+            {"transcript": transcript, "max_attempts": max_attempts, "project_hint": project_hint}
+        )
     except Exception as exc:  # noqa: BLE001 - persistent upstream failure after the graph's own retries
         log.warning("entry architect graph failed: %r", exc)
         return None

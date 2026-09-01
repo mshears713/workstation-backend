@@ -34,6 +34,7 @@ async def submit_entry(
     audio_bytes: bytes,
     duration_seconds: Optional[float],
     sample_rate_hz: Optional[int],
+    project_hint: Optional[str] = None,
 ) -> tuple[dict[str, Any], bool]:
     """Validate, persist the audio, create the item record, and schedule
     background processing. Returns (record, duplicate) - same
@@ -57,7 +58,7 @@ async def submit_entry(
         }
     )
 
-    record = store.create_item(entry_id, request_id, source.strip(), audio_meta)
+    record = store.create_item(entry_id, request_id, source.strip(), audio_meta, project_hint=project_hint)
 
     task = asyncio.create_task(_execute(entry_id))
     _background_tasks.add(task)
@@ -135,8 +136,9 @@ async def _execute(entry_id: str) -> None:
         store.mark_status(entry_id, "processing")
 
         # Step 2: entry architect
+        project_hint = record.get("project_hint")
         architect_result: Optional[EntryArchitectResult] = await asyncio.to_thread(
-            run_entry_architect, transcription_result.text
+            run_entry_architect, transcription_result.text, project_hint=project_hint
         )
         store.record_entry_architect(entry_id, architect_result.model_dump() if architect_result else None)
 
@@ -165,6 +167,17 @@ async def _execute(entry_id: str) -> None:
         store.record_source_page(entry_id, source_page)
 
         if van_build_log_fields is None:
+            if architect_result is not None and project_hint == "none":
+                # Mike told the device up front this recording isn't part of
+                # the van-build project (the NONE button) - a null
+                # van_build_log here is the expected, deliberate outcome, not
+                # something to interrupt him about. Only skip the
+                # notification when the architect itself actually ran
+                # (architect_result is not None) - a genuine processing
+                # failure (_fallback_source_fields path) still needs
+                # flagging regardless of which project was selected.
+                store.finalize_item(entry_id, status="completed")
+                return
             # Directive: preserve the Source, allow the build-log page id to
             # be absent, and notify - never pass an incomplete record into
             # the semantic verifier, which requires both page ids.
@@ -197,6 +210,7 @@ async def _execute(entry_id: str) -> None:
             transcription_result.text,
             source_fields.model_dump(),
             van_build_log_fields.model_dump(),
+            project_hint=project_hint,
         )
         store.record_semantic_verification(entry_id, verification.model_dump())
 

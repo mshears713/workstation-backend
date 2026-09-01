@@ -15,6 +15,7 @@ def run_semantic_verifier(
     transcript: str,
     source_fields: dict,
     van_build_log_fields: dict,
+    project_hint: str | None = None,
     llm_factory: LlmFactory = get_chat_model,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> SemanticVerification:
@@ -33,7 +34,9 @@ def run_semantic_verifier(
     notification, since the records are already live in Notion.
     """
     llm = llm_factory()
-    user_prompt = prompts.build_semantic_verifier_user_prompt(transcript, source_fields, van_build_log_fields)
+    user_prompt = prompts.build_semantic_verifier_user_prompt(
+        transcript, source_fields, van_build_log_fields, project_hint
+    )
     try:
         result = invoke_structured_with_retry(
             llm, prompts.SEMANTIC_VERIFIER_PERSONA, user_prompt, SemanticVerification, max_attempts

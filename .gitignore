@@ -28,6 +28,11 @@ data/notifications/*
 data/entries/*
 !data/entries/.gitkeep
 
+# In-progress chunked ESP32 recordings (see app/api/streaming_capture.py) -
+# purely transient scratch space, deleted on successful finalize, no
+# .gitkeep needed since a fresh clone doesn't need this dir to pre-exist.
+data/_streaming_tmp/
+
 # LangGraph CLI local state
 .langgraph_api/
 
