@@ -28,6 +28,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _item_dir(issue_request_id: str) -> Path:
+    path = _data_dir() / issue_request_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def save_audio(issue_request_id: str, content: bytes) -> Path:
+    """Keeps the source audio next to the record.
+
+    transcribe_audio() takes a path, and keeping the file also means a filed
+    issue can be checked against what was actually said - the transcript is
+    a model's opinion, the audio is the evidence.
+    """
+    audio_path = _item_dir(issue_request_id) / "audio.wav"
+    audio_path.write_bytes(content)
+    return audio_path
+
+
 def load_record(issue_request_id: str) -> Optional[dict[str, Any]]:
     path = _record_path(issue_request_id)
     if not path.exists():

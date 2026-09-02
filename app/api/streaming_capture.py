@@ -23,11 +23,11 @@ from pathlib import Path
 from app.config import get_settings
 from app.api.upload_validation import SAFE_ID_RE, UploadValidationError
 
-# The three ESP32 upload kinds that share this module - see entries_router.py/
+# The ESP32 upload kinds that share this module - see entries_router.py/
 # notes_router.py/voice_inbox_router.py, each of which calls append_chunk()/
 # finalize_wav() with its own kind so the three in-progress temp files never
 # collide even if request_ids were ever reused across kinds.
-_VALID_KINDS = {"entries", "notes", "voice_inbox"}
+_VALID_KINDS = {"entries", "notes", "voice_inbox", "issues"}
 
 
 def _streaming_dir(kind: str) -> Path:
@@ -35,6 +35,17 @@ def _streaming_dir(kind: str) -> Path:
     path = get_settings().streaming_tmp_dir_path / kind
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+# A WAV with no frames is still 44 bytes of header, which is why
+# validate_upload's "audio file is empty" check does not catch a capture that
+# never received a chunk - 44 is not zero.
+WAV_HEADER_BYTES = 44
+
+
+def has_audio(wav_bytes: bytes) -> bool:
+    """True if the assembled WAV actually contains samples."""
+    return len(wav_bytes) > WAV_HEADER_BYTES
 
 
 class ChunkOrderError(Exception):
