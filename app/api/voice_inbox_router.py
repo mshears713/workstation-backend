@@ -124,6 +124,17 @@ async def finish_voice_inbox_item(
     except runner.VoiceInboxValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
+    # finalize_wav() returns a valid 44-byte header-only WAV when no
+    # chunk ever arrived, and validate_upload's "audio file is empty"
+    # check does not fire on that - 44 is not zero. Without this, an
+    # empty capture is accepted, pays for a transcription of nothing,
+    # and leaves a record for a recording that never happened.
+    if not streaming_capture.has_audio(audio_bytes):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="no audio was captured - nothing to transcribe",
+        )
+
     block_align = channels * (bits_per_sample // 8)
     duration_seconds = (
         (len(audio_bytes) - 44) / (sample_rate_hz * block_align)

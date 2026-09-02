@@ -153,3 +153,55 @@ def test_cancel_discards_accumulated_chunks(client, kind, base):
     assert client.post(f"{base}/{rid}/cancel").status_code == 202
     # A fresh capture under the same id starts from zero again.
     assert _chunk(client, base, rid, CHUNK_B, offset=0).json()["total_bytes"] == 1024
+
+
+# --- empty captures (issue #17) -------------------------------------------
+#
+# finalize_wav() returns a valid 44-byte header-only WAV when nothing ever
+# arrived, and validate_upload's "audio file is empty" check does not fire on
+# it. Caught on the issues route while building #8, where it filed a GitHub
+# issue from nothing; these cover the other three.
+
+FINISH_PATHS = [
+    ("/api/v1/notes/finish", {}),
+    ("/api/v1/voice-inbox/finish", {}),
+    ("/api/v1/entries/finish", {}),
+]
+
+
+@pytest.mark.parametrize("path,extra", FINISH_PATHS)
+def test_finish_with_no_chunks_is_rejected(client, path, extra):
+    data = {"request_id": "empty-capture-1", "source": "esp32-box3", "sample_rate_hz": 16000}
+    data.update(extra)
+    resp = client.post(path, data=data)
+    assert resp.status_code == 422
+    assert "no audio" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("path,extra", FINISH_PATHS)
+def test_finish_after_cancel_is_rejected(client, path, extra):
+    """The realistic route in: chunks arrived, the capture was cancelled, and
+    a finish still followed."""
+    kind_base = path.rsplit("/", 1)[0]
+    rid = "cancelled-then-finished"
+    client.post(f"{kind_base}/{rid}/chunk?offset=0", content=CHUNK_A)
+    client.post(f"{kind_base}/{rid}/cancel")
+
+    data = {"request_id": rid, "source": "esp32-box3", "sample_rate_hz": 16000}
+    data.update(extra)
+    assert client.post(path, data=data).status_code == 422
+
+
+def test_has_audio_distinguishes_header_only_from_real_audio():
+    import wave
+    from io import BytesIO
+
+    buf = BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"")
+    assert len(buf.getvalue()) == streaming_capture.WAV_HEADER_BYTES
+    assert not streaming_capture.has_audio(buf.getvalue())
+    assert streaming_capture.has_audio(buf.getvalue() + CHUNK_A)

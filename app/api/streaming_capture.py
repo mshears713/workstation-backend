@@ -118,10 +118,18 @@ def append_chunk(
 
 def finalize_wav(kind: str, request_id: str, sample_rate_hz: int, bits_per_sample: int, channels: int) -> bytes:
     """Wraps the accumulated raw PCM chunks in one real WAV header and
-    deletes the temp file. Missing/empty input (a finish call with no prior
-    chunks) still produces a valid, silent zero-length WAV rather than
-    raising - validate_upload()'s "audio file is empty" check downstream is
-    what should reject that case, not this function."""
+    deletes the temp file.
+
+    Missing/empty input (a finish call with no prior chunks) still produces a
+    valid, silent WAV rather than raising, so that assembling stays a pure
+    transformation with one job.
+
+    This previously claimed validate_upload()'s "audio file is empty" check
+    would reject that case downstream. It does not: the WAV is 44 bytes of
+    header, and 44 is not zero, so an empty capture sailed through to
+    transcription. Callers must use has_audio() on the result - all four
+    finish handlers now do.
+    """
     path = _chunk_path(kind, request_id)
     pcm = path.read_bytes() if path.exists() else b""
 
