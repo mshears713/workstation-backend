@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "projects": [
+    { "id": "van1",    "label": "VAN1" },
+    { "id": "van2",    "label": "VAN2" },
+    { "id": "general", "label": "GEN" }
+  ],
+  "repos": [
+    { "id": "workstation", "label": "WKSTN",   "repo": "mshears713/workstation_esp32" },
+    { "id": "backend",     "label": "BACKEND", "repo": "mshears713/workstation-backend" }
+  ]
+}
