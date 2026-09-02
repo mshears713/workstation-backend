@@ -27,7 +27,6 @@ restart.
 """
 
 import json
-from pathlib import Path
 from typing import Any
 
 from app.config import _PROJECT_ROOT
