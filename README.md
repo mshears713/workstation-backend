@@ -80,14 +80,29 @@ does real work. Backend reachability is `GET /health`, polled by
 ## Running it
 
 ```
-.venv\Scripts\python.exe -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+.un.ps1
 ```
 
-`--host 0.0.0.0` matters — `127.0.0.1` is unreachable from the ESP32. The
-address must match `BACKEND_BASE_URL` in the firmware's
-`main/backend_config.h`. Plain HTTP, no TLS: LAN only.
+That wrapper exists so the two settings that are easy to get wrong, and
+expensive to notice later, are not retyped each time:
 
-Add `--reload` while iterating; without it a code change needs a restart.
+- **`--host 0.0.0.0`** — the ESP32 cannot reach `127.0.0.1`. Binding to
+  loopback looks fine from this machine and fails from the device.
+- **`--reload`** — restart on any change under `app/`, `config/`, or `.env`.
+  Without it a committed change can sit unloaded for hours while firmware is
+  tested against it, which has happened and cost a hardware test plus a
+  post-mortem to work out.
+
+`.env` is watched explicitly because uvicorn's reloader only watches Python
+files by default, and adding a credential there is exactly the kind of change
+you expect to take effect immediately.
+
+Safe to leave running during a recording: a restart mid-capture fails the
+in-flight chunk, the firmware retries it, and the accumulated `.pcm` on disk
+survives — so the recording continues rather than being lost.
+
+The address must match `BACKEND_BASE_URL` in the firmware's
+`main/backend_config.h`. Plain HTTP, no TLS: LAN only.
 
 **After any backend change, check what is actually running:**
 
