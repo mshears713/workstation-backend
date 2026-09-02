@@ -128,14 +128,48 @@ in `config/projects.json` can be written to: the device sends an opaque id and
 
 | Route | Command | Destination |
 |---|---|---|
-| `/api/v1/voice-inbox` | SEND (15 s auto), NOTE (long-form) | Notion Voice Inbox |
-| `/api/v1/issues` | GO | GitHub issue |
-| `/api/v1/projects` | selector population | — |
+| `POST /api/v1/voice-inbox/{id}/chunk`, `/finish` | SEND (15 s auto), NOTE (long-form) | Notion Voice Inbox |
+| `POST /api/v1/issues/{id}/chunk`, `/finish` | GO (15 s auto) | transcribe → GitHub issue |
+| `POST /api/v1/issues` | — (text only; curl, tests) | GitHub issue |
+| `GET /api/v1/projects` | selector population | — |
 | `/api/v1/notifications` | YES + background poll | spoken playback |
-| `/api/v1/remote` | 150 ms poll | Roku IR |
-| `/health` | 3 s poll | reachability |
+| `/api/v1/remote` | polled while online | Roku IR |
+| `/health` | 3 s poll | reachability + running commit |
+
+`NOTE` also sends `project_hint`, the operator's selection on the device. It
+is recorded with the note but **not** written to Notion — see the open
+question at the end of this file.
+
+`/api/v1/issues/finish` is the one synchronous capture route: it transcribes
+and files the issue *before* answering, so the device can show a real issue
+number instead of polling for one. Everything else returns 202 and processes
+in the background.
 
 Every audio route accepts chunks at `/{request_id}/chunk?offset=N` and
 assembles on `/finish`. The offset is an ordering guard — the firmware uploads
 from a task other than the one filling the buffer, so arrival order is no
 longer guaranteed by the device being single-threaded.
+
+`request_id` doubles as the resource id on every capture route, so a retry
+after a lost response returns the original rather than creating a second
+record — or, for issues, a second GitHub issue.
+
+## Open question: where the operator's routing hint should go
+
+The device lets the operator mark a NOTE with where they think it belongs.
+That selection reaches the backend as `project_hint` and is stored on the
+record, but **nothing writes it to Notion**, so the automation that fills
+`Category` and `Related Project` never sees it.
+
+The intent is that the hint is advisory: the note still lands in the Voice
+Inbox, and the hint tells the downstream agent what the operator had in mind.
+That needs somewhere on the Voice Inbox page to put it —
+`create_voice_inbox_page` currently leaves `Category`, `Processing Notes` and
+`Related Project` deliberately blank for Notion's own automation, so this is a
+workspace-schema decision rather than a code one.
+
+Worth being precise about what exists today, because it is easy to assume
+more: this backend can write to **three** Notion destinations — Voice Inbox,
+Sources, and Van Build Log. There is no Quartermaster or Knowledge writer.
+Of the three, only Voice Inbox is reachable from a live capture; the other two
+belonged to the parked entries pipeline.
