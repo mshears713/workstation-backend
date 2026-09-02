@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Response, status
 
 from app.api import runner, store
+from app.config import _PROJECT_ROOT
 from app.api.entries_router import router as entries_router
 from app.api.notes_router import router as notes_router
 from app.api.notifications_router import router as notifications_router
@@ -21,6 +22,42 @@ from app.api.schemas import (
 
 log = logging.getLogger("earthside_handshake")
 
+
+def _running_commit() -> str:
+    """Short SHA of the commit this process was started from.
+
+    Exists because uvicorn is started by hand and stays up for hours, so a
+    committed backend change is easy to test against a server that never
+    loaded it. That happened: a NOTE was tested for a new project_hint field
+    against a server predating it, the field was silently dropped as an
+    unknown form field, and it looked like a firmware bug.
+
+    Read straight from .git rather than via a subprocess - no shelling out
+    on import, and it degrades to "unknown" outside a checkout instead of
+    raising. Resolved once at import, so it reports the code actually
+    running, not the code on disk now.
+    """
+    try:
+        git = _PROJECT_ROOT / ".git"
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref: "):
+            ref = git / head[5:]
+            sha = ref.read_text(encoding="utf-8").strip() if ref.exists() else ""
+            if not sha:  # packed refs
+                for line in (git / "packed-refs").read_text(encoding="utf-8").splitlines():
+                    if line.endswith(head[5:]):
+                        sha = line.split()[0]
+                        break
+        else:
+            sha = head
+        return sha[:7] or "unknown"
+    except Exception:
+        return "unknown"
+
+
+_COMMIT = _running_commit()
+_STARTED_AT = datetime.now(timezone.utc).isoformat()
+
 app = FastAPI(title="Operation Homebound Stage 2", version="0.1.0")
 app.include_router(notes_router)
 app.include_router(voice_inbox_router)
@@ -31,7 +68,13 @@ app.include_router(remote_router)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    """Liveness probe, polled by the ESP32 every 3s (main/backend_health.c).
+
+    `commit` and `started_at` are for humans and tooling checking that the
+    running server matches the code just committed; the device only looks at
+    the status code, so extra fields are free.
+    """
+    return {"status": "ok", "commit": _COMMIT, "started_at": _STARTED_AT}
 
 
 @app.post("/api/v1/handshake", response_model=HandshakeResponse)

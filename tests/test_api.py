@@ -30,7 +30,36 @@ def test_health():
     with TestClient(app) as client:
         resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        body = resp.json()
+        assert body["status"] == "ok"
+        # commit/started_at let a human confirm the running server is the
+        # code they just committed - the ESP32 only checks the status code.
+        assert body["commit"]
+        assert body["started_at"]
+
+
+def test_health_reports_the_running_commit():
+    """Regression guard for a real miss: a firmware change was tested against
+    a uvicorn process started before the matching backend commit, the new
+    form field was silently dropped as unknown, and it looked like a device
+    bug. Now the running commit is one curl away."""
+    import subprocess
+
+    with TestClient(app) as client:
+        reported = client.get("/health").json()["commit"]
+
+    try:
+        expected = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        expected = ""
+
+    if expected:
+        assert reported == expected
+    else:
+        assert reported == "unknown"  # not a checkout - degrade, never raise
 
 
 def test_full_run_lifecycle(monkeypatch):
