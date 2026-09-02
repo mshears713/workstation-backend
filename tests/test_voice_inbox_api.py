@@ -3,6 +3,7 @@ import time
 from fastapi.testclient import TestClient
 
 from app.api import voice_inbox_runner
+from app.api import voice_inbox_store
 from app.api.main import app
 from tests.voice_fakes import (
     fake_create_voice_inbox_page,
@@ -176,3 +177,56 @@ def test_unknown_voice_inbox_item_returns_404():
         assert resp.status_code == 404
         resp2 = client.get("/api/v1/voice-inbox/does-not-exist/result")
         assert resp2.status_code == 404
+
+
+# --- project_hint (issue #5) ------------------------------------------------
+#
+# NOTE carries the operator's project selection (main/project_selector.h) as
+# routing/context metadata. The Voice Inbox stays authoritative downstream;
+# the backend's job is only to record what was selected, unchanged.
+
+def test_project_hint_is_persisted_on_single_shot_upload():
+    with TestClient(app) as client:
+        resp = _upload(client, request_id="vi-hint-1", project_hint="van2")
+        assert resp.status_code == 202
+        record = voice_inbox_store.load_record("vi-hint-1")
+        assert record["project_hint"] == "van2"
+
+
+def test_project_hint_is_optional():
+    """NOTE must still work with no project chosen - the selector defaults to
+    NONE and resets on reboot, so most notes will not carry one."""
+    with TestClient(app) as client:
+        resp = _upload(client, request_id="vi-hint-absent-1")
+        assert resp.status_code == 202
+        assert voice_inbox_store.load_record("vi-hint-absent-1")["project_hint"] is None
+
+
+def test_project_hint_is_persisted_through_the_chunked_path():
+    """The path the device actually uses - the hint rides on the finish call,
+    not on any chunk."""
+    with TestClient(app) as client:
+        assert client.post(
+            "/api/v1/voice-inbox/vi-hint-chunked-1/chunk?offset=0", content=b"\x01\x02" * 512
+        ).status_code == 202
+        resp = client.post(
+            "/api/v1/voice-inbox/finish",
+            data={
+                "request_id": "vi-hint-chunked-1",
+                "source": "esp32-box3",
+                "sample_rate_hz": 16000,
+                "project_hint": "van1",
+            },
+        )
+        assert resp.status_code == 202
+        assert voice_inbox_store.load_record("vi-hint-chunked-1")["project_hint"] == "van1"
+
+
+def test_unknown_project_hint_is_stored_verbatim_not_rejected():
+    """Deliberately not validated against an enum here. The device owns the
+    list today and #6 moves it to a backend-managed catalog; rejecting
+    unknown values now would break the device the moment that list changes."""
+    with TestClient(app) as client:
+        resp = _upload(client, request_id="vi-hint-unknown-1", project_hint="some-future-project")
+        assert resp.status_code == 202
+        assert voice_inbox_store.load_record("vi-hint-unknown-1")["project_hint"] == "some-future-project"

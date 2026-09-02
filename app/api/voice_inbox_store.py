@@ -67,12 +67,17 @@ def create_item(
     request_id: str,
     source: str,
     audio_meta: dict[str, Any],
+    project_hint: Optional[str] = None,
 ) -> dict[str, Any]:
     now = _now()
     record = {
         "voice_inbox_id": voice_inbox_id,
         "request_id": request_id,
         "source": source,
+        # Routing/context metadata chosen on the device (main/project_selector.h)
+        # and carried through unchanged. The Voice Inbox stays authoritative
+        # downstream - this only records what the operator had selected.
+        "project_hint": project_hint,
         "status": "accepted",
         "created_at": now,
         "updated_at": now,

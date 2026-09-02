@@ -29,6 +29,7 @@ async def _accept_voice_inbox_item(
     audio_bytes: bytes,
     duration_seconds: Optional[float],
     sample_rate_hz: Optional[int],
+    project_hint: Optional[str],
 ) -> VoiceInboxAccepted:
     """Shared by create_voice_inbox_item() (single-shot upload) and
     finish_voice_inbox_item() (streaming upload's final call)."""
@@ -41,6 +42,7 @@ async def _accept_voice_inbox_item(
             audio_bytes=audio_bytes,
             duration_seconds=duration_seconds,
             sample_rate_hz=sample_rate_hz,
+            project_hint=project_hint,
         )
     except runner.VoiceInboxValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
@@ -67,11 +69,12 @@ async def create_voice_inbox_item(
     audio: UploadFile = File(...),
     duration_seconds: Optional[float] = Form(None),
     sample_rate_hz: Optional[int] = Form(None),
+    project_hint: Optional[str] = Form(None),
 ) -> VoiceInboxAccepted:
     audio_bytes = await audio.read()
     return await _accept_voice_inbox_item(
         response, request_id, source, audio.filename, audio.content_type,
-        audio_bytes, duration_seconds, sample_rate_hz,
+        audio_bytes, duration_seconds, sample_rate_hz, project_hint,
     )
 
 
@@ -114,6 +117,7 @@ async def finish_voice_inbox_item(
     sample_rate_hz: int = Form(...),
     bits_per_sample: int = Form(16),
     channels: int = Form(1),
+    project_hint: Optional[str] = Form(None),
 ) -> VoiceInboxAccepted:
     try:
         audio_bytes = streaming_capture.finalize_wav(_STREAMING_KIND, request_id, sample_rate_hz, bits_per_sample, channels)
@@ -128,7 +132,7 @@ async def finish_voice_inbox_item(
 
     return await _accept_voice_inbox_item(
         response, request_id, source, f"{request_id}.wav", "audio/wav",
-        audio_bytes, duration_seconds, sample_rate_hz,
+        audio_bytes, duration_seconds, sample_rate_hz, project_hint,
     )
 
 

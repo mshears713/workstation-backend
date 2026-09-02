@@ -26,6 +26,7 @@ async def submit_voice_inbox_item(
     audio_bytes: bytes,
     duration_seconds: Optional[float],
     sample_rate_hz: Optional[int],
+    project_hint: Optional[str] = None,
 ) -> tuple[dict[str, Any], bool]:
     """Validate, persist the audio, create the item record, and schedule
     background processing (transcribe -> create a Notion Voice Inbox page).
@@ -52,7 +53,9 @@ async def submit_voice_inbox_item(
         }
     )
 
-    record = store.create_item(voice_inbox_id, request_id, source.strip(), audio_meta)
+    record = store.create_item(
+        voice_inbox_id, request_id, source.strip(), audio_meta, project_hint=project_hint
+    )
 
     task = asyncio.create_task(_execute(voice_inbox_id))
     _background_tasks.add(task)
