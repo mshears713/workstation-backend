@@ -27,6 +27,8 @@ data/notifications/*
 !data/notifications/.gitkeep
 data/entries/*
 !data/entries/.gitkeep
+data/issues/*
+!data/issues/.gitkeep
 
 # In-progress chunked ESP32 recordings (see app/api/streaming_capture.py) -
 # purely transient scratch space, deleted on successful finalize, no

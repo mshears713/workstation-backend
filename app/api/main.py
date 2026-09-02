@@ -8,6 +8,7 @@ from app.api import runner, store
 from app.config import _PROJECT_ROOT
 from app.api.entries_router import router as entries_router
 from app.api.notes_router import router as notes_router
+from app.api.issues_router import router as issues_router
 from app.api.notifications_router import router as notifications_router
 from app.api.projects_router import router as projects_router
 from app.api.remote_router import router as remote_router
@@ -66,6 +67,7 @@ app.include_router(notifications_router)
 app.include_router(entries_router)
 app.include_router(remote_router)
 app.include_router(projects_router)
+app.include_router(issues_router)
 
 
 @app.get("/health")

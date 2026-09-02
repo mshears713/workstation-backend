@@ -16,6 +16,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     # Without this the chunked-upload tests would accumulate .pcm files in
     # the project's real data/_streaming_tmp instead of a throwaway dir.
     monkeypatch.setenv("STREAMING_TMP_DIR", str(tmp_path / "_streaming_tmp"))
+    monkeypatch.setenv("ISSUES_DATA_DIR", str(tmp_path / "issues"))
     monkeypatch.setenv("LANGSMITH_TRACING", "false")
     monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
     get_settings.cache_clear()

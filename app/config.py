@@ -40,12 +40,19 @@ class Settings(BaseSettings):
     voice_inbox_data_dir: str = "data/voice_inbox"
     notifications_data_dir: str = "data/notifications"
     entries_data_dir: str = "data/entries"
+    issues_data_dir: str = "data/issues"
     # Transient accumulation buffer for chunked ESP32 recordings (see
     # app/api/streaming_capture.py) - not one of the "final artifact" dirs
     # above, entries are deleted as soon as a capture finalizes.
     streaming_tmp_dir: str = "data/_streaming_tmp"
     reviewer_max_attempts: int = 2
     request_timeout_seconds: int = 60
+
+    # Never reaches the ESP32. The device names an approved repo id and this
+    # backend resolves and files the issue - see projects_catalog.resolve_repo
+    # and app/integrations/github_client.py.
+    github_token: str = ""
+    github_api_base_url: str = "https://api.github.com"
 
     notion_api_key: str = ""
     notion_voice_inbox_data_source_id: str = "a250d3f5-ae1f-471c-97da-47cd94f596d0"
@@ -92,6 +99,13 @@ class Settings(BaseSettings):
     @property
     def entries_data_dir_path(self) -> Path:
         path = Path(self.entries_data_dir)
+        if not path.is_absolute():
+            path = _PROJECT_ROOT / path
+        return path
+
+    @property
+    def issues_data_dir_path(self) -> Path:
+        path = Path(self.issues_data_dir)
         if not path.is_absolute():
             path = _PROJECT_ROOT / path
         return path
