@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "projects": [
     {
       "id": "general",
@@ -7,11 +7,6 @@
     }
   ],
   "repos": [
-    {
-      "id": "workstation",
-      "label": "WKSTN",
-      "repo": "mshears713/workstation_esp32"
-    },
     {
       "id": "backend",
       "label": "BACKEND",
