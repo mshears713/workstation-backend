@@ -4,12 +4,23 @@ import pytest
 
 from app.integrations import notion_client
 
+# conftest.py stubs query_projects out for every test so nothing reaches
+# Notion by accident. This module is the one place that tests the real
+# implementation, so it puts the original back.
+_REAL_QUERY_PROJECTS = notion_client.query_projects
+
+
+@pytest.fixture(autouse=True)
+def _use_real_query_projects(monkeypatch):
+    monkeypatch.setattr(notion_client, "query_projects", _REAL_QUERY_PROJECTS)
+
 
 class _FakeSettings:
     notion_api_key = "fake-notion-key"
     notion_voice_inbox_data_source_id = "fake-data-source-id"
     notion_sources_data_source_id = "fake-sources-data-source-id"
     notion_van_build_log_data_source_id = "fake-van-build-log-data-source-id"
+    notion_projects_data_source_id = "fake-projects-data-source-id"
     request_timeout_seconds = 5
 
 
@@ -236,3 +247,157 @@ def test_create_van_build_log_page_rejects_naive_datetime(monkeypatch):
             allocation="Not Applicable", summary="", source_page_id="source-page-1",
             date=datetime(2026, 7, 30),
         )
+
+
+# --- the operator's routing hint -------------------------------------------
+#
+# The hint is advisory: the note lands in the Voice Inbox either way, and this
+# relation only tells the downstream agent which project the operator had in
+# mind. The "exactly the owned properties" test above already pins the absent
+# case - no hint, no Related Project key at all.
+
+
+def test_create_voice_inbox_page_sets_related_project_when_the_operator_chose_one(monkeypatch):
+    monkeypatch.setattr(notion_client, "get_settings", lambda: _FakeSettings())
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return _FakeResponse(200, {"id": "page-123", "url": "https://notion.so/page-123"})
+
+    monkeypatch.setattr(notion_client.httpx, "post", fake_post)
+
+    notion_client.create_voice_inbox_page(
+        name="2026-09-03 10:00:00 UTC",
+        captured_at=datetime(2026, 9, 3, 10, 0, 0, tzinfo=timezone.utc),
+        transcript="the alternator bracket needs a spacer",
+        related_project_page_id="396850a9-11d3-818c-b435-d689b8d63db0",
+    )
+
+    properties = captured["json"]["properties"]
+    assert properties["Related Project"] == {
+        "relation": [{"id": "396850a9-11d3-818c-b435-d689b8d63db0"}]
+    }
+    # Still nothing written to the three fields Notion's own automation owns.
+    assert "Category" not in properties
+    assert "Processing Notes" not in properties
+
+
+# --- reading the Projects database -----------------------------------------
+
+
+def _projects_response(results, has_more=False, next_cursor=None):
+    return {"results": results, "has_more": has_more, "next_cursor": next_cursor}
+
+
+def _page(page_id, name, status="Active", cue="", device_label="", repo=None):
+    return {
+        "id": page_id,
+        "properties": {
+            "Name": {"title": [{"plain_text": name}]},
+            "Cue": {"rich_text": [{"plain_text": cue}]},
+            "Device Label": {"rich_text": [{"plain_text": device_label}]},
+            "GitHub Repo": {"url": repo},
+            "Status": {"select": {"name": status}},
+        },
+    }
+
+
+def test_query_projects_asks_for_active_and_testing_only(monkeypatch):
+    monkeypatch.setattr(notion_client, "get_settings", lambda: _FakeSettings())
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, _projects_response([]))
+
+    monkeypatch.setattr(notion_client.httpx, "post", fake_post)
+    notion_client.query_projects()
+
+    assert captured["url"].endswith("/data_sources/fake-projects-data-source-id/query")
+    statuses = [
+        clause["select"]["equals"] for clause in captured["json"]["filter"]["or"]
+    ]
+    assert statuses == ["Active", "Testing"]
+
+
+def test_query_projects_flattens_the_properties_it_reads(monkeypatch):
+    monkeypatch.setattr(notion_client, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(
+        notion_client.httpx,
+        "post",
+        lambda *a, **kw: _FakeResponse(
+            200,
+            _projects_response([
+                _page(
+                    "396850a9-11d3-818c-b435-d689b8d63db0",
+                    "Van Flipping",
+                    cue="Fleet van to trusted camper",
+                    repo="https://github.com/mshears713/vanflip",
+                )
+            ]),
+        ),
+    )
+
+    assert notion_client.query_projects() == [
+        {
+            "page_id": "396850a9-11d3-818c-b435-d689b8d63db0",
+            "name": "Van Flipping",
+            "device_label": "",
+            "cue": "Fleet van to trusted camper",
+            "github_repo": "https://github.com/mshears713/vanflip",
+        }
+    ]
+
+
+def test_query_projects_rejoins_text_notion_split_into_spans(monkeypatch):
+    """Notion splits styled text into several spans, so a cue typed as one
+    phrase can arrive in pieces. Taking only the first span would silently
+    truncate it."""
+    monkeypatch.setattr(notion_client, "get_settings", lambda: _FakeSettings())
+    page = _page("abc", "x")
+    page["properties"]["Cue"] = {
+        "rich_text": [{"plain_text": "Fleet van to "}, {"plain_text": "trusted camper"}]
+    }
+    monkeypatch.setattr(
+        notion_client.httpx,
+        "post",
+        lambda *a, **kw: _FakeResponse(200, _projects_response([page])),
+    )
+
+    assert notion_client.query_projects()[0]["cue"] == "Fleet van to trusted camper"
+
+
+def test_query_projects_follows_pagination(monkeypatch):
+    monkeypatch.setattr(notion_client, "get_settings", lambda: _FakeSettings())
+    pages = [
+        _projects_response([_page("a", "First")], has_more=True, next_cursor="cur"),
+        _projects_response([_page("b", "Second")]),
+    ]
+    calls = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(json.get("start_cursor"))
+        return _FakeResponse(200, pages[len(calls) - 1])
+
+    monkeypatch.setattr(notion_client.httpx, "post", fake_post)
+
+    assert [p["name"] for p in notion_client.query_projects()] == ["First", "Second"]
+    assert calls == [None, "cur"]
+
+
+def test_query_projects_raises_on_non_2xx(monkeypatch):
+    """projects_catalog catches this and falls back to the local file - but it
+    has to be told, not handed an empty list that looks like 'no projects'."""
+    monkeypatch.setattr(notion_client, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(
+        notion_client.httpx,
+        "post",
+        lambda *a, **kw: _FakeResponse(404, {"message": "not shared with the integration"}),
+    )
+
+    with pytest.raises(notion_client.NotionClientError):
+        notion_client.query_projects()

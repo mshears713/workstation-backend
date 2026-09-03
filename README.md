@@ -130,14 +130,19 @@ Copy `.env.example` to `.env`. Four secrets are required for the live paths:
 every graph), `NOTION_API_KEY` (Voice Inbox and van build log writes), and
 `GITHUB_TOKEN` (only if issue creation is used).
 
-`config/projects.json` holds the approved project and repository targets the
-workstation may select. It is re-read per request, so adding a target needs no
-restart — and no firmware flash, which is the point.
+`config/projects.json` holds the approved project and repository targets that
+are always available regardless of Notion. It is re-read per request, so adding
+a target needs no restart - and no firmware flash, which is the point. The AI-OS
+Projects database is merged on top of it; see "Where the selectable projects
+come from" below.
 
 The `GITHUB_TOKEN` should be a **fine-grained** token limited to the specific
-repositories, with `Issues: Read and write`. Even so, only repositories listed
-in `config/projects.json` can be written to: the device sends an opaque id and
-`projects_catalog.resolve_repo()` is the allowlist.
+repositories, with `Issues: Read and write`. Even so, only repositories on the
+merged catalog can be written to: the device sends an opaque id and
+`projects_catalog.resolve_repo()` is the allowlist. Note that this now includes
+repositories named by a Notion project's `GitHub Repo` property, so the token's
+repository scope is the real boundary - adding a URL in Notion does not grant
+access the token does not already have.
 
 ## Live paths
 
@@ -146,14 +151,14 @@ in `config/projects.json` can be written to: the device sends an opaque id and
 | `POST /api/v1/voice-inbox/{id}/chunk`, `/finish` | SEND (15 s auto), NOTE (long-form) | Notion Voice Inbox |
 | `POST /api/v1/issues/{id}/chunk`, `/finish` | GO (15 s auto) | transcribe → GitHub issue |
 | `POST /api/v1/issues` | — (text only; curl, tests) | GitHub issue |
-| `GET /api/v1/projects` | selector population | — |
+| `GET /api/v1/projects` | selector population | AI-OS Projects + `config/projects.json` |
 | `/api/v1/notifications` | YES + background poll | spoken playback |
 | `/api/v1/remote` | polled while online | Roku IR |
 | `/health` | 3 s poll | reachability + running commit |
 
-`NOTE` also sends `project_hint`, the operator's selection on the device. It
-is recorded with the note but **not** written to Notion — see the open
-question at the end of this file.
+`NOTE` also sends `project_hint`, the operator's selection on the device. It is
+recorded with the note and written to Notion as the Voice Inbox page's
+`Related Project` relation — see "The operator's routing hint" below.
 
 `/api/v1/issues/finish` is the one synchronous capture route: it transcribes
 and files the issue *before* answering, so the device can show a real issue
@@ -169,22 +174,59 @@ longer guaranteed by the device being single-threaded.
 after a lost response returns the original rather than creating a second
 record — or, for issues, a second GitHub issue.
 
-## Open question: where the operator's routing hint should go
+## Where the selectable projects come from
 
-The device lets the operator mark a NOTE with where they think it belongs.
-That selection reaches the backend as `project_hint` and is stored on the
-record, but **nothing writes it to Notion**, so the automation that fills
-`Category` and `Related Project` never sees it.
+`GET /api/v1/projects` merges two sources, and the order matters:
 
-The intent is that the hint is advisory: the note still lands in the Voice
-Inbox, and the hint tells the downstream agent what the operator had in mind.
-That needs somewhere on the Voice Inbox page to put it —
-`create_voice_inbox_page` currently leaves `Category`, `Processing Notes` and
-`Related Project` deliberately blank for Notion's own automation, so this is a
-workspace-schema decision rather than a code one.
+1. **`config/projects.json`** - a tracked file, hand-editable, always
+   available. This is the floor: no network, no API key, no Notion.
+2. **The AI-OS Projects database** - every project whose `Status` is `Active`
+   or `Testing`, read live from Notion and cached for two minutes.
+
+Starting a project in the AI-OS therefore makes it selectable at the workbench
+with no firmware flash and no edit on this machine, which is the whole point.
+The file half stays because a Notion outage should narrow the list, not empty
+it - and because the workstation's own two repositories are not AI-OS projects
+and still need somewhere to live.
+
+Three Projects properties are read, none written:
+
+| Property | Type | Used for |
+|---|---|---|
+| `Device Label` | text | The label shown on the 320x240 screen. Capped at 12 characters - only one of the five current project names fits unaided, which is why this exists. Derived from the name when unset, so an unlabelled project looks wrong rather than disappearing. |
+| `Cue` | text | The AI-OS's own "2-6 word memory hook". Sent to the device so tapping a project can show it - a 12-character label is not enough to be sure you picked the right one. |
+| `GitHub Repo` | url | A project with one becomes a GO target; a project without one is simply not offered for GO. A malformed URL means the same thing, quietly - failing here would take the catalog down over a typo the capture path does not need. |
+
+**The Projects database must be shared with the Notion integration.** Without
+it the query returns 404, the failure is logged, and the local file is served
+alone - capture keeps working, the AI-OS projects just do not appear. Share it
+from the database's `...` menu -> Connections -> Workstation.
+
+## The operator's routing hint
+
+The device lets the operator mark a NOTE with which project they think it
+belongs to. That selection reaches the backend as `project_hint` - an opaque
+catalog id, never a Notion page id - and `projects_catalog.resolve_project_page_id()`
+maps it back to the page. The Voice Inbox page is then created with a
+**`Related Project`** relation pointing at it.
+
+It is advisory, not routing. The note lands in the Voice Inbox either way; the
+relation only tells the downstream agent what the operator had in mind. An
+empty hint is the ordinary case - no selection, or a local config-file project
+with no AI-OS page behind it - and the note is written without the relation,
+exactly as before.
+
+`Category`, `Processing Notes` and the page body are still left untouched for
+Notion's own automation.
+
+> Historical note, because it explains a zero: `Related Project` was pointed
+> at Notion's stock Projects *template* (demo rows - "Website redesign",
+> "Product launch"), not the AI-OS Projects database. It was empty on all 101
+> Voice Inbox rows because nothing sensible could ever link there. It was
+> repointed on 2026-09-03; this feature depends on that.
 
 Worth being precise about what exists today, because it is easy to assume
-more: this backend can write to **three** Notion destinations — Voice Inbox,
+more: this backend can write to **three** Notion destinations - Voice Inbox,
 Sources, and Van Build Log. There is no Quartermaster or Knowledge writer.
 Of the three, only Voice Inbox is reachable from a live capture; the other two
 belonged to the parked entries pipeline.

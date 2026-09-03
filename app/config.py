@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     notion_voice_inbox_data_source_id: str = "a250d3f5-ae1f-471c-97da-47cd94f596d0"
     notion_sources_data_source_id: str = "6b0b9164-c5eb-4015-9bf4-b01ebfd938e2"
     notion_van_build_log_data_source_id: str = "342c88fc-e138-46ed-af22-ecf4717bdffb"
+    # Read, not written. The AI-OS Projects database is the source of truth
+    # for what the workstation may select - see app/api/projects_catalog.py.
+    notion_projects_data_source_id: str = "4fe04711-6bac-470a-be5e-4652351ae7ef"
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000

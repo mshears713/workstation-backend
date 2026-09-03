@@ -192,13 +192,26 @@ def create_van_build_log_page(
     return _post_page(settings.notion_van_build_log_data_source_id, properties)
 
 
-def create_voice_inbox_page(name: str, captured_at: datetime, transcript: str) -> dict[str, Any]:
-    """Creates a page in the Voice Inbox Notion database with only the four
-    fields this pipeline owns - Name, Captured At, Source (always
-    "Workstation"), and Original Transcript. Everything else (Category,
-    Processing Notes, Related Project, page body) is left for Notion's own
-    AI automation to fill in afterward. Returns {"id": ..., "url": ...}.
-    Raises NotionClientError on any non-2xx response.
+def create_voice_inbox_page(
+    name: str,
+    captured_at: datetime,
+    transcript: str,
+    related_project_page_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Creates a page in the Voice Inbox Notion database with only the fields
+    this pipeline owns - Name, Captured At, Source (always "Workstation"),
+    Original Transcript, Status, and Related Project when the operator chose
+    one at the device. Category, Processing Notes and the page body are left
+    for Notion's own AI automation to fill in afterward.
+
+    `related_project_page_id` is the operator's routing hint, and it is
+    advisory rather than routing: the note still lands in the Voice Inbox
+    either way, and setting the relation only tells the downstream agent
+    which project the operator had in mind. None is a normal case - the
+    operator often has no view, and the transcript decides instead.
+
+    Returns {"id": ..., "url": ...}. Raises NotionClientError on any non-2xx
+    response.
     """
     if captured_at.tzinfo is None:
         raise NotionClientError(
@@ -214,4 +227,110 @@ def create_voice_inbox_page(name: str, captured_at: datetime, transcript: str) -
         "Original Transcript": _rich_text_property(transcript),
         "Status": {"select": {"name": "New"}},
     }
+    if related_project_page_id:
+        properties["Related Project"] = {"relation": [{"id": related_project_page_id}]}
     return _post_page(settings.notion_voice_inbox_data_source_id, properties)
+
+
+# ---------------------------------------------------------------------------
+# Reading the Projects database
+#
+# The only read this client does; everything else here creates pages. The
+# AI-OS Projects database is the source of truth for what the workstation may
+# select, so that starting a new project makes it appear on the device without
+# a firmware flash or a backend edit - see app/api/projects_catalog.py.
+# ---------------------------------------------------------------------------
+
+# Which projects the device is allowed to see. "Testing" is deliberately
+# included: something being started on but not yet live is exactly the kind of
+# thing worth capturing notes against.
+PROJECT_STATUSES = ("Active", "Testing")
+
+# A ceiling on pagination, not an expectation. The real list is single digits;
+# this only stops a filter mistake from walking the whole database.
+_PROJECT_PAGE_LIMIT = 5
+
+
+def _plain_text(prop: Optional[dict[str, Any]], key: str) -> str:
+    """Flattens a Notion title/rich_text property to a plain string.
+
+    Notion splits styled text into several spans, so a value typed as one
+    phrase can still arrive as multiple blocks - joining them is required, not
+    defensive. Returns "" for a missing or empty property, which every caller
+    treats as "not set" rather than an error.
+    """
+    if not isinstance(prop, dict):
+        return ""
+    spans = prop.get(key)
+    if not isinstance(spans, list):
+        return ""
+    return "".join(
+        span.get("plain_text", "") for span in spans if isinstance(span, dict)
+    ).strip()
+
+
+def query_projects() -> list[dict[str, str]]:
+    """Every Active or Testing project, as plain dicts.
+
+    Returns a list of {"page_id", "name", "device_label", "cue", "github_repo"}
+    with "" for anything unset. Raises NotionClientError on a non-2xx response
+    or a missing API key - projects_catalog.py catches that and falls back to
+    the local config file, so a Notion outage degrades the selectable list
+    rather than taking capture down.
+    """
+    settings = get_settings()
+    api_key = _require_api_key()
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Notion-Version": NOTION_API_VERSION,
+        "Content-Type": "application/json",
+    }
+    payload: dict[str, Any] = {
+        "filter": {
+            "or": [
+                {"property": "Status", "select": {"equals": status}}
+                for status in PROJECT_STATUSES
+            ]
+        },
+        "page_size": 100,
+    }
+
+    out: list[dict[str, str]] = []
+    cursor: Optional[str] = None
+    for _ in range(_PROJECT_PAGE_LIMIT):
+        if cursor:
+            payload["start_cursor"] = cursor
+        response = httpx.post(
+            f"{NOTION_API_BASE_URL}/data_sources/{settings.notion_projects_data_source_id}/query",
+            headers=headers,
+            json=payload,
+            timeout=settings.request_timeout_seconds,
+        )
+        if response.status_code >= 300:
+            raise NotionClientError(
+                f"Notion projects query failed: {response.status_code} {response.text}"
+            )
+        body = response.json()
+
+        for page in body.get("results", []):
+            if not isinstance(page, dict):
+                continue
+            props = page.get("properties") or {}
+            out.append(
+                {
+                    "page_id": str(page.get("id") or ""),
+                    "name": _plain_text(props.get("Name"), "title"),
+                    "device_label": _plain_text(props.get("Device Label"), "rich_text"),
+                    "cue": _plain_text(props.get("Cue"), "rich_text"),
+                    "github_repo": (props.get("GitHub Repo") or {}).get("url") or "",
+                }
+            )
+
+        if not body.get("has_more"):
+            break
+        cursor = body.get("next_cursor")
+        if not cursor:
+            break
+
+    return [entry for entry in out if entry["page_id"] and entry["name"]]

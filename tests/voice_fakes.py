@@ -86,11 +86,11 @@ def fake_transcribe_audio_failing(audio_path):
     raise RuntimeError("Simulated transcription failure for testing.")
 
 
-def fake_create_voice_inbox_page(name, captured_at, transcript):
+def fake_create_voice_inbox_page(name, captured_at, transcript, related_project_page_id=None):
     return {"id": "fake-notion-page-id", "url": "https://notion.so/fake-notion-page-id"}
 
 
-def fake_create_voice_inbox_page_failing(name, captured_at, transcript):
+def fake_create_voice_inbox_page_failing(name, captured_at, transcript, related_project_page_id=None):
     raise RuntimeError("Simulated Notion page creation failure for testing.")
 
 

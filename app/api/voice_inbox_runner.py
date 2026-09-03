@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from app.api import voice_inbox_store as store
+from app.api import projects_catalog
 from app.api.notification_delivery import notify_audio_unreliable
 from app.api.upload_validation import UploadValidationError as VoiceInboxValidationError
 from app.api.upload_validation import validate_upload
@@ -121,11 +122,21 @@ async def _execute(voice_inbox_id: str) -> None:
         )
         name = captured_at.strftime("%Y-%m-%d %H:%M:%S UTC")
 
+        # The operator's routing hint, resolved here rather than on the device:
+        # the ESP32 sends an opaque catalog id and never learns which Notion
+        # page it stands for. None is the ordinary case - no selection, or a
+        # local config-file project with no AI-OS page behind it - and the note
+        # is written without the relation, exactly as before.
+        related_project_page_id = await asyncio.to_thread(
+            projects_catalog.resolve_project_page_id, record.get("project_hint")
+        )
+
         page = await asyncio.to_thread(
             notion_client.create_voice_inbox_page,
             name=name,
             captured_at=captured_at,
             transcript=transcription_result.text,
+            related_project_page_id=related_project_page_id,
         )
         store.finalize_item(voice_inbox_id, page)
     except Exception as exc:  # noqa: BLE001 - persisted as the item's failure reason

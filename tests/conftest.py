@@ -1,6 +1,8 @@
 import pytest
 
+from app.api import projects_catalog
 from app.config import get_settings
+from app.integrations import notion_client
 
 
 @pytest.fixture(autouse=True)
@@ -22,3 +24,25 @@ def isolated_data_dir(tmp_path, monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def no_live_notion_projects(monkeypatch):
+    """Keeps the catalog off the network.
+
+    projects_catalog now reads the AI-OS Projects database, so without this
+    every test that touches the catalog - including ones that only care about
+    config/projects.json - would make a real Notion request and then take the
+    fallback path anyway: slow, and quietly dependent on whether Notion is up.
+
+    The default is a failure rather than an empty list, because that is what
+    an unconfigured backend actually does, and it keeps the fallback honest.
+    Tests that want Notion data monkeypatch query_projects themselves.
+    """
+    def unavailable():
+        raise notion_client.NotionClientError("Notion disabled in tests")
+
+    monkeypatch.setattr(notion_client, "query_projects", unavailable)
+    projects_catalog.reset_notion_cache()
+    yield
+    projects_catalog.reset_notion_cache()
