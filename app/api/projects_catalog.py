@@ -72,7 +72,7 @@ NOTION_CACHE_SECONDS = 120.0
 # not take the capture flow down with it.
 _FALLBACK: dict[str, Any] = {
     "version": 0,
-    "projects": [{"id": "general", "label": "GEN"}],
+    "projects": [{"id": "none", "label": "NO PROJECT"}],
     "repos": [],
 }
 

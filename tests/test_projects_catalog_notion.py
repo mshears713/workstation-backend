@@ -68,7 +68,7 @@ def test_notion_projects_are_offered_alongside_the_local_ones(notion):
 
     # The local file's entries survive - a Notion outage must not be the only
     # thing standing between the operator and a usable selector.
-    assert "general" in ids
+    assert "none" in ids
     # Dashless, so it fits the device's 33-byte id field.
     assert "391850a911d381fab8c6d9a79c66559a" in ids
 
@@ -177,7 +177,7 @@ def test_the_hint_resolves_back_to_a_notion_page(notion):
     )
 
 
-@pytest.mark.parametrize("hint", [None, "", "none", "general", "van1", "deadbeef"])
+@pytest.mark.parametrize("hint", [None, "", "none", "general", "deadbeef"])
 def test_no_hint_means_no_relation_rather_than_an_error(notion, hint):
     """An empty hint is the ordinary case, not a failure: the operator often
     has no view and the transcript decides instead. Local config-file projects
@@ -191,10 +191,20 @@ def test_no_hint_means_no_relation_rather_than_an_error(notion, hint):
 
 def test_a_notion_outage_narrows_the_list_instead_of_emptying_it():
     """conftest leaves query_projects raising, so this is the unconfigured
-    and the offline case at once."""
+    and the offline case at once.
+
+    Asserted against the local file rather than against a hardcoded list:
+    config/projects.json is meant to be edited, and a test that has to be
+    updated every time someone adds a target is a test that will be updated
+    without being read.
+    """
+    local = projects_catalog._load_local_catalog()
     catalog = projects_catalog.device_catalog()
-    assert [p["id"] for p in catalog["projects"]] == ["van1", "van2", "general"]
-    assert [r["id"] for r in catalog["repos"]] == ["workstation", "backend"]
+
+    assert [p["id"] for p in catalog["projects"]] == [p["id"] for p in local["projects"]]
+    assert [r["id"] for r in catalog["repos"]] == [r["id"] for r in local["repos"]]
+    # The point of the fallback: something is still selectable.
+    assert catalog["projects"]
 
 
 def test_a_blip_after_a_good_read_keeps_serving_the_last_good_list(notion, monkeypatch):
@@ -202,7 +212,8 @@ def test_a_blip_after_a_good_read_keeps_serving_the_last_good_list(notion, monke
     a single request timed out would be worse than showing one that is two
     minutes old."""
     notion(REAL_PROJECTS)
-    assert len(projects_catalog.load_catalog()["projects"]) == 3 + len(REAL_PROJECTS)
+    expected = len(projects_catalog._load_local_catalog()["projects"]) + len(REAL_PROJECTS)
+    assert len(projects_catalog.load_catalog()["projects"]) == expected
 
     def boom():
         raise notion_client.NotionClientError("timeout")
@@ -210,7 +221,7 @@ def test_a_blip_after_a_good_read_keeps_serving_the_last_good_list(notion, monke
     monkeypatch.setattr(notion_client, "query_projects", boom)
     monkeypatch.setattr(projects_catalog, "NOTION_CACHE_SECONDS", 0.0)  # force a re-read
 
-    assert len(projects_catalog.load_catalog()["projects"]) == 3 + len(REAL_PROJECTS)
+    assert len(projects_catalog.load_catalog()["projects"]) == expected
 
 
 def test_a_successful_read_is_cached_rather_than_made_per_request(notion, monkeypatch):
